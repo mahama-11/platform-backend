@@ -1,0 +1,185 @@
+host: 0.0.0.0
+port: 8195
+gin_mode: debug
+log_level: info
+use_mock: false
+
+app:
+  frontend_base_url: "http://localhost:5173"
+
+bootstrap:
+  commercial:
+    products:
+      - code: "menu"
+        name: "Menu Studio"
+        owner_team: "menu"
+      - code: "ecommerce"
+        name: "Agent Ecommerce"
+        owner_team: "agent-ecommerce"
+    commercial_entities:
+      - code: "menu_default_entity"
+        name: "Menu Default Entity"
+        entity_type: "internal"
+        country_code: "CN"
+        currency: "CNY"
+    billing_profiles:
+      - code: "menu"
+        product_code: "menu"
+        commercial_entity_code: "menu_default_entity"
+        region_scope: "CN"
+        currency: "CNY"
+    billable_items:
+      - product_code: "menu"
+        code: "menu_studio_single_generate"
+        name: "Menu Studio Single Generate"
+        meter_unit: "action"
+        billing_scope: "organization"
+        settlement_mode: "credits"
+        pricing_behavior: "standard"
+      - product_code: "menu"
+        code: "menu_studio_refinement_generate"
+        name: "Menu Studio Refinement Generate"
+        meter_unit: "action"
+        billing_scope: "organization"
+        settlement_mode: "credits"
+        pricing_behavior: "standard"
+      - product_code: "menu"
+        code: "menu_studio_variation_generate"
+        name: "Menu Studio Variation Generate"
+        meter_unit: "action"
+        billing_scope: "organization"
+        settlement_mode: "credits"
+        pricing_behavior: "standard"
+  runtime:
+    product_endpoints:
+      - product_code: "menu"
+        callback_kind: "menu_internal"
+        base_url: "http://v-menu-backend-dev:8196"
+        secret: "menu-service-secret"
+        metadata: '{"output_storage_category":"studio-assets"}'
+      - product_code: "ecommerce"
+        callback_kind: "ecommerce_internal"
+        base_url: "http://v-ecommerce-backend-dev:8396"
+        secret: "ecommerce-service-secret"
+        metadata: '{"output_storage_category":"ecommerce-assets"}'
+    provider_bindings:
+      - product_code: "menu"
+        task_type: "image_generation"
+        provider_code: "comfyui_bridge"
+        priority: 50
+        enabled: true
+        metadata: '{"objective_scores":{"quality":92,"speed":45,"cost":35},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "image_generation"
+        provider_code: "comfyui_bridge"
+        priority: 50
+        enabled: true
+        metadata: '{"objective_scores":{"quality":92,"speed":45,"cost":35},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "image_generation"
+        provider_code: "volcengine"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":85,"speed":50,"cost":45},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+  storage:
+    bindings:
+      - product_code: "menu"
+        category: "studio-assets"
+        provider_code: "local"
+        local_base_dir: "/app/data/storage"
+        priority: 100
+        enabled: true
+      - product_code: "ecommerce"
+        category: "ecommerce-assets"
+        provider_code: "local"
+        local_base_dir: "/app/data/storage"
+        priority: 100
+        enabled: true
+      - product_code: "ecommerce"
+        category: "template-examples"
+        provider_code: "local"
+        local_base_dir: "/app/data/storage"
+        priority: 100
+        enabled: true
+
+database:
+  driver: postgres
+  host: kong-database
+  port: 5432
+  user: kong
+  password: kongpassword
+  dbname: kong
+  sslmode: disable
+  max_open_conns: 25
+  max_idle_conns: 5
+  auto_migrate_enabled: true
+
+redis:
+  enabled: true
+  host: kyc-redis
+  port: 6379
+  password: ""
+  db: 0
+  pool_size: 10
+  min_idle_conns: 5
+  max_retries: 3
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
+
+security:
+  jwt_secret: platform-dev-secret
+  jwt_expiration: 24h
+  rate_limit_per_second: 100
+  rate_limit_burst: 200
+  kong_shared_secret: platform-kong-shared-secret
+  internal_service_secret: platform-internal-secret
+  encryption_key: platform-encryption-key-change-me
+
+oauth:
+  google:
+    client_id: ""
+    client_secret: ""
+    redirect_url: ""
+    frontend_return_url: ""
+
+monitoring:
+  metrics:
+    enabled: true
+    port: 9091
+    path: "/metrics"
+    namespace: "platform"
+    subsystem: "service"
+    push_interval: "30s"
+    histogram_buckets: [0.1, 0.5, 1, 2, 5, 10]
+  tracing:
+    enabled: false
+    service_name: "platform-service"
+    service_version: "1.0.0"
+    environment: "development"
+    jaeger_endpoint: "http://localhost:14268/api/traces"
+    sample_rate: 1.0
+    log_spans: false
+
+runtime:
+  worker_enabled: true
+  poll_initial_backoff: 2s
+  poll_backoff: 5s
+  poll_timeout: 5m
+
+volcengine:
+  api_key: "ark-2e5e5fa9-82f1-4ab4-be28-e47c6ecd12ee-e8dfe"
+  base_url: "https://ark.cn-beijing.volces.com/api/v3"
+  image_model: "doubao-seedream-4-5-251128"
+  image_size: "2K"
+  output_format: "png"
+  watermark: false
+
+comfyui_bridge:
+  enabled: true
+  base_url: "https://agent-menu.com/api/comfyui/"
+  api_key: ""
+  request_timeout: 60s
+  callback_base_url: "http://127.0.0.1:8195"
+  default_workflow_id: ""
+  default_output_format: "png"

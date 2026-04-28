@@ -1,0 +1,686 @@
+package runtime
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/url"
+	"strconv"
+	"strings"
+	"time"
+
+	"platform-service/internal/config"
+	"platform-service/internal/models"
+	assetstorage "platform-service/internal/modules/assetstorage"
+	"platform-service/pkg/logger"
+	"platform-service/pkg/platformconst"
+)
+
+type JobQueue interface {
+	EnqueueDispatch(runtimeJobID string, delay time.Duration) error
+	EnqueuePoll(runtimeJobID string, delay time.Duration) error
+	EnqueueCallback(deliveryID string, delay time.Duration) error
+}
+
+func defaultRuntimeConfig(cfg config.RuntimeConfig) config.RuntimeConfig {
+	if cfg.WorkerConcurrency <= 0 {
+		cfg.WorkerConcurrency = 8
+	}
+	if cfg.QueueName == "" {
+		cfg.QueueName = "runtime:default"
+	}
+	if cfg.ExecutionTimeout <= 0 {
+		cfg.ExecutionTimeout = 5 * time.Minute
+	}
+	if cfg.RetryBackoff <= 0 {
+		cfg.RetryBackoff = 15 * time.Second
+	}
+	if cfg.PollInitialBackoff <= 0 {
+		cfg.PollInitialBackoff = 2 * time.Second
+	}
+	if cfg.PollBackoff <= 0 {
+		cfg.PollBackoff = 5 * time.Second
+	}
+	if cfg.PollTimeout <= 0 {
+		cfg.PollTimeout = 5 * time.Minute
+	}
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 3
+	}
+	return cfg
+}
+
+func (s *Service) HandleDispatchTask(_ context.Context, runtimeJobID string) error {
+	job, err := s.repo.FindRuntimeJobByID(runtimeJobID)
+	if err != nil {
+		return err
+	}
+	return s.dispatchRuntimeJob(job, time.Now())
+}
+
+func (s *Service) HandlePollTask(_ context.Context, runtimeJobID string) error {
+	job, err := s.repo.FindRuntimeJobByID(runtimeJobID)
+	if err != nil {
+		return err
+	}
+	return s.pollRuntimeJob(job, time.Now())
+}
+
+func (s *Service) HandleCallbackTask(ctx context.Context, deliveryID string) error {
+	delivery, err := s.repo.FindCallbackDeliveryByID(deliveryID)
+	if err != nil {
+		return err
+	}
+	if delivery.Status == "delivered" || delivery.Status == "dead_letter" {
+		return nil
+	}
+	job, err := s.repo.FindRuntimeJobByID(delivery.RuntimeJobID)
+	if err != nil {
+		return err
+	}
+	callbackClient := s.callbackClientForJob(job)
+	now := time.Now()
+	delivery.AttemptCount++
+	delivery.LastAttemptAt = &now
+	if callbackClient == nil {
+		delivery.Status = "dead_letter"
+		delivery.LastError = "product callback client is not configured"
+		delivery.NextAttemptAt = nil
+		return s.repo.SaveCallbackDelivery(delivery)
+	}
+	var deliverErr error
+	switch delivery.CallbackType {
+	case "runtime_update":
+		var input ProductUpdateRuntimeInput
+		if err := json.Unmarshal([]byte(delivery.PayloadJSON), &input); err != nil {
+			deliverErr = err
+		} else {
+			deliverErr = callbackClient.UpdateJobRuntime(ctx, delivery.SourceID, input)
+		}
+	case "result":
+		var input ProductRecordResultsInput
+		if err := json.Unmarshal([]byte(delivery.PayloadJSON), &input); err != nil {
+			deliverErr = err
+		} else {
+			deliverErr = callbackClient.RecordJobResults(ctx, delivery.SourceID, input)
+		}
+	default:
+		deliverErr = fmt.Errorf("unsupported callback type: %s", delivery.CallbackType)
+	}
+	if deliverErr == nil {
+		delivery.Status = "delivered"
+		delivery.LastError = ""
+		delivery.DeliveredAt = &now
+		delivery.NextAttemptAt = nil
+		return s.repo.SaveCallbackDelivery(delivery)
+	}
+	delivery.LastError = deliverErr.Error()
+	if delivery.AttemptCount >= max(delivery.MaxAttempts, 1) {
+		delivery.Status = "dead_letter"
+		delivery.NextAttemptAt = nil
+		return s.repo.SaveCallbackDelivery(delivery)
+	}
+	nextAttempt := now.Add(s.cfg.RetryBackoff)
+	delivery.Status = "retrying"
+	delivery.NextAttemptAt = &nextAttempt
+	if err := s.repo.SaveCallbackDelivery(delivery); err != nil {
+		return err
+	}
+	if s.queue != nil {
+		return s.queue.EnqueueCallback(delivery.ID, s.cfg.RetryBackoff)
+	}
+	return nil
+}
+
+func (s *Service) dispatchRuntimeJob(job *models.RuntimeJob, now time.Time) error {
+	if job.Status != "queued" {
+		return nil
+	}
+	if s.registry == nil {
+		return nil
+	}
+	providerCode, err := s.resolveProviderCode(job)
+	if err != nil {
+		return s.failRuntimeJob(job, "provider_binding_not_found", "PROVIDER_BINDING_NOT_FOUND", err.Error(), now)
+	}
+	provider, err := s.registry.Get(providerCode)
+	if err != nil {
+		return s.failRuntimeJob(job, "provider_not_found", "PROVIDER_NOT_FOUND", err.Error(), now)
+	}
+	input, err := decodeRuntimeInputManifest(job.InputManifest)
+	if err != nil {
+		return s.failRuntimeJob(job, "input_manifest_invalid", "INPUT_MANIFEST_INVALID", err.Error(), now)
+	}
+	hydrateErr := s.hydrateRuntimeSourceAssets(&input)
+	if hydrateErr != nil {
+		return s.failRuntimeJob(job, "source_asset_invalid", "SOURCE_ASSET_INVALID", hydrateErr.Error(), now)
+	}
+	job.ProviderCode = providerCode
+	job.Status = platformconst.StatusProcessing
+	job.Stage = "dispatching"
+	job.StageMessage = "Dispatching to provider"
+	job.AttemptCount++
+	timeoutAt := now.Add(s.cfg.ExecutionTimeout)
+	job.TimeoutAt = &timeoutAt
+	saveErr := s.repo.SaveRuntimeJob(job)
+	if saveErr != nil {
+		return saveErr
+	}
+	s.runtimeJobLogger(job).Info("runtime.dispatch.started")
+	s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{
+		Status:        platformconst.StatusProcessing,
+		Stage:         "dispatching",
+		StageMessage:  "Dispatching to provider",
+		ProviderJobID: job.ProviderJobID,
+	})
+	submission, err := provider.Submit(context.Background(), ProviderJobRequest{
+		RuntimeJobID:   job.ID,
+		TaskType:       job.TaskType,
+		ProductCode:    job.ProductCode,
+		OrganizationID: job.OrganizationID,
+		UserID:         job.UserID,
+		Provider:       providerCode,
+		CallbackURL:    s.providerCallbackURL(job.ID),
+		Input:          input,
+		Metadata:       decodeJSONMap(job.Metadata),
+	})
+	attemptStatus := "succeeded"
+	providerResponse := ""
+	if submission != nil {
+		providerResponse = mustMarshal(submission)
+	}
+	if err != nil {
+		attemptStatus = platformconst.StatusFailed
+		_, _ = s.RecordRuntimeAttempt(job.ID, RecordRuntimeAttemptInput{
+			Status:       attemptStatus,
+			ErrorClass:   classifyProviderErrorClass(err),
+			ErrorCode:    "PROVIDER_SUBMIT_FAILED",
+			ErrorMessage: err.Error(),
+			ProviderCode: providerCode,
+			ProviderMode: job.ProviderMode,
+		})
+		return s.handleDispatchError(job, err, now)
+	}
+	_, _ = s.RecordRuntimeAttempt(job.ID, RecordRuntimeAttemptInput{
+		Status:           attemptStatus,
+		ProviderCode:     providerCode,
+		ProviderMode:     job.ProviderMode,
+		ProviderResponse: providerResponse,
+	})
+	job.ProviderJobID = submission.ProviderJobID
+	job.Stage = defaultString(submission.Stage, "provider_accepted")
+	job.StageMessage = defaultString(submission.StageMessage, "Accepted by provider")
+	job.NextRetryAt = nil
+	if err := s.repo.SaveRuntimeJob(job); err != nil {
+		return err
+	}
+	s.runtimeJobLogger(job).
+		With("eta_seconds", submission.EtaSeconds).
+		Info("runtime.dispatch.accepted")
+	eta := submission.EtaSeconds
+	s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{
+		Status:        platformconst.StatusProcessing,
+		Stage:         job.Stage,
+		StageMessage:  job.StageMessage,
+		EtaSeconds:    &eta,
+		ProviderJobID: job.ProviderJobID,
+	})
+	if submission.Completion != nil {
+		if err := s.completeRuntimeJob(job, input, submission.Completion, now); err != nil {
+			return s.failRuntimeJob(job, "result_persist_failed", "RESULT_PERSIST_FAILED", err.Error(), now)
+		}
+		return nil
+	}
+	if s.queue != nil {
+		return s.queue.EnqueuePoll(job.ID, s.cfg.PollInitialBackoff)
+	}
+	return nil
+}
+
+func (s *Service) handleDispatchError(job *models.RuntimeJob, err error, now time.Time) error {
+	errorClass := classifyProviderErrorClass(err)
+	fromProvider := job.ProviderCode
+	if s.tryFallbackProvider(job, errorClass) {
+		job.Status = "queued"
+		job.Stage = "fallback_scheduled"
+		job.StageMessage = "Fallback provider scheduled"
+		job.NextRetryAt = nil
+		job.ErrorClass = errorClass
+		job.ErrorCode = "PROVIDER_FALLBACK_SCHEDULED"
+		job.ErrorMessage = err.Error()
+		if saveErr := s.repo.SaveRuntimeJob(job); saveErr != nil {
+			return saveErr
+		}
+		s.runtimeJobLogger(job).
+			With("from_provider", fromProvider, "to_provider", job.ProviderCode, "error_class", errorClass, "error_code", job.ErrorCode).
+			Warn("runtime.fallback.scheduled")
+		if s.queue != nil {
+			return s.queue.EnqueueDispatch(job.ID, 0)
+		}
+		return nil
+	}
+	if !isRetryableProviderError(err) || job.AttemptCount >= job.MaxAttempts {
+		return s.failRuntimeJob(job, classifyProviderErrorClass(err), "PROVIDER_SUBMIT_FAILED", err.Error(), now)
+	}
+	retryAt := now.Add(s.cfg.RetryBackoff)
+	job.Status = "queued"
+	job.Stage = "retry_scheduled"
+	job.StageMessage = "Retry scheduled after provider failure"
+	job.NextRetryAt = &retryAt
+	job.ErrorClass = classifyProviderErrorClass(err)
+	job.ErrorCode = "PROVIDER_SUBMIT_FAILED"
+	job.ErrorMessage = err.Error()
+	if err := s.repo.SaveRuntimeJob(job); err != nil {
+		return err
+	}
+	s.runtimeJobLogger(job).
+		With("retry_at", retryAt.Format(time.RFC3339), "error_class", job.ErrorClass, "error_code", job.ErrorCode).
+		Warn("runtime.retry.scheduled")
+	s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{
+		Status:       "queued",
+		Stage:        job.Stage,
+		StageMessage: job.StageMessage,
+	})
+	if s.queue != nil {
+		return s.queue.EnqueueDispatch(job.ID, s.cfg.RetryBackoff)
+	}
+	return nil
+}
+
+func (s *Service) pollRuntimeJob(job *models.RuntimeJob, now time.Time) error {
+	if job.Status == platformconst.StatusCompleted || job.Status == platformconst.StatusFailed || job.Status == platformconst.StatusCanceled {
+		return nil
+	}
+	if job.ProviderCode == "" || job.ProviderJobID == "" || s.registry == nil {
+		return nil
+	}
+	provider, err := s.registry.Get(job.ProviderCode)
+	if err != nil {
+		return err
+	}
+	result, err := provider.Poll(context.Background(), job.ProviderJobID)
+	if err != nil {
+		return s.handleDispatchError(job, err, now)
+	}
+	if result == nil {
+		return nil
+	}
+	progress := result.Progress
+	eta := result.EtaSeconds
+	s.runtimeJobLogger(job).
+		With("progress", progress, "eta_seconds", eta, "provider_stage", result.Stage, "provider_status", result.Status).
+		Info("runtime.poll.progress")
+	switch result.Status {
+	case platformconst.StatusCompleted:
+		if result.Completion == nil {
+			return s.failRuntimeJob(job, "result_invalid", "PROVIDER_RESULT_INVALID", "provider completed without completion payload", now)
+		}
+		input, decodeErr := decodeRuntimeInputManifest(job.InputManifest)
+		if decodeErr != nil {
+			return s.failRuntimeJob(job, "input_manifest_invalid", "INPUT_MANIFEST_INVALID", decodeErr.Error(), now)
+		}
+		if err := s.completeRuntimeJob(job, input, result.Completion, now); err != nil {
+			return s.failRuntimeJob(job, "result_persist_failed", "RESULT_PERSIST_FAILED", err.Error(), now)
+		}
+		return nil
+	case platformconst.StatusFailed:
+		failErr := newNonRetryableProviderError(defaultString(result.ErrorMessage, "provider task failed"))
+		return s.handleDispatchError(job, failErr, now)
+	default:
+		s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{
+			Status:        platformconst.StatusProcessing,
+			Stage:         defaultString(result.Stage, job.Stage),
+			StageMessage:  defaultString(result.StageMessage, job.StageMessage),
+			Progress:      &progress,
+			EtaSeconds:    &eta,
+			ProviderJobID: job.ProviderJobID,
+		})
+		job.Status = platformconst.StatusProcessing
+		job.Stage = defaultString(result.Stage, "provider_running")
+		job.StageMessage = defaultString(result.StageMessage, "Provider is still processing")
+		if err := s.repo.SaveRuntimeJob(job); err != nil {
+			return err
+		}
+		if s.queue != nil {
+			return s.queue.EnqueuePoll(job.ID, s.cfg.PollBackoff)
+		}
+	}
+	return nil
+}
+
+func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManifest, completion *ProviderCompletion, now time.Time) error {
+	job.Status = platformconst.StatusCompleted
+	job.Stage = platformconst.StatusCompleted
+	job.StageMessage = completion.StageMessage
+	job.CompletedAt = &now
+	job.OutputManifest = mustMarshal(completion)
+	if err := s.repo.SaveRuntimeJob(job); err != nil {
+		return err
+	}
+	variants := make([]ProductRecordResultVariant, 0, len(completion.Variants))
+	outputCategory := s.outputStorageCategory(job)
+	for _, variant := range completion.Variants {
+		sourceURL := variant.SourceURL
+		previewURL := firstNonEmpty(variant.PreviewURL, variant.SourceURL)
+		storageKey := ""
+		if s.storage != nil {
+			switch {
+			case strings.TrimSpace(variant.InlineData) != "":
+				stored, storeErr := s.storage.UploadAsset(context.Background(), assetstorage.UploadAssetInput{
+					ProductCode: job.ProductCode,
+					Category:    outputCategory,
+					FileName:    "",
+					MimeType:    variant.MimeType,
+					Payload:     variant.InlineData,
+				})
+				if storeErr != nil {
+					s.runtimeJobLogger(job).
+						With("variant_index", variant.Index, "output_storage_category", outputCategory, "storage_operation", "upload_inline", "error", storeErr).
+						Error("runtime.result.store_failed")
+					return storeErr
+				}
+				storageKey = stored.StorageKey
+				sourceURL = ""
+				previewURL = ""
+				variant.MimeType = firstNonEmpty(stored.MimeType, variant.MimeType)
+			case strings.TrimSpace(sourceURL) != "":
+				stored, storeErr := s.storage.ImportRemoteAsset(context.Background(), job.ProductCode, outputCategory, "", variant.MimeType, sourceURL)
+				if storeErr != nil {
+					s.runtimeJobLogger(job).
+						With("variant_index", variant.Index, "output_storage_category", outputCategory, "storage_operation", "import_remote", "error", storeErr).
+						Error("runtime.result.store_failed")
+					return storeErr
+				}
+				storageKey = stored.StorageKey
+				sourceURL = ""
+				previewURL = ""
+				variant.MimeType = firstNonEmpty(stored.MimeType, variant.MimeType)
+			}
+		}
+		variants = append(variants, ProductRecordResultVariant{
+			Index:      variant.Index,
+			Status:     "ready",
+			IsSelected: variant.Index == 0,
+			Asset: ProductRecordResultAsset{
+				AssetType:  "generated",
+				SourceType: "generated",
+				FileName:   "",
+				StorageKey: storageKey,
+				SourceURL:  sourceURL,
+				PreviewURL: previewURL,
+				MimeType:   variant.MimeType,
+				Width:      variant.Width,
+				Height:     variant.Height,
+			},
+		})
+	}
+	s.runtimeJobLogger(job).
+		With("variant_count", len(variants), "output_storage_category", outputCategory).
+		Info("runtime.completed")
+	if err := s.notifyProductResults(job, ProductRecordResultsInput{
+		Status:       platformconst.StatusCompleted,
+		Progress:     completion.Progress,
+		StageMessage: completion.StageMessage,
+		Metadata:     completion.Metadata,
+		Variants:     variants,
+	}); err != nil {
+		s.runtimeJobLogger(job).
+			With("variant_count", len(variants), "output_storage_category", outputCategory, "error", err).
+			Warn("runtime.results.notify_failed")
+		job.Stage = "callback_results_failed"
+		job.StageMessage = "Result callback failed; runtime output remains available"
+		job.ErrorClass = "callback_failed"
+		job.ErrorCode = "PRODUCT_RESULT_CALLBACK_FAILED"
+		job.ErrorMessage = err.Error()
+		if saveErr := s.repo.SaveRuntimeJob(job); saveErr != nil {
+			return saveErr
+		}
+		return nil
+	}
+	return nil
+}
+
+func (s *Service) outputStorageCategory(job *models.RuntimeJob) string {
+	if job == nil {
+		return "runtime-assets"
+	}
+	if endpoint := s.productEndpoint(job.ProductCode); endpoint != nil {
+		metadata := decodeJSONMap(endpoint.Metadata)
+		if category, ok := metadata["output_storage_category"].(string); ok && strings.TrimSpace(category) != "" {
+			return category
+		}
+	}
+	if binding, err := s.repo.FindPreferredStorageBinding(job.ProductCode, "runtime-assets"); err == nil && binding != nil && strings.TrimSpace(binding.Category) != "" {
+		return binding.Category
+	}
+	if binding, err := s.repo.FindPreferredStorageBinding(job.ProductCode, "*"); err == nil && binding != nil && strings.TrimSpace(binding.Category) != "" && binding.Category != "*" {
+		return binding.Category
+	}
+	if bindings, err := s.repo.ListStorageBindings(job.ProductCode); err == nil {
+		for _, binding := range bindings {
+			category := strings.TrimSpace(binding.Category)
+			if category == "" || category == "*" {
+				continue
+			}
+			return category
+		}
+	}
+	return "runtime-assets"
+}
+
+func (s *Service) failRuntimeJob(job *models.RuntimeJob, errorClass, errorCode, message string, now time.Time) error {
+	job.Status = platformconst.StatusFailed
+	job.Stage = platformconst.StatusFailed
+	job.StageMessage = message
+	job.ErrorClass = errorClass
+	job.ErrorCode = errorCode
+	job.ErrorMessage = message
+	job.CompletedAt = &now
+	job.NextRetryAt = nil
+	if err := s.repo.SaveRuntimeJob(job); err != nil {
+		return err
+	}
+	s.runtimeJobLogger(job).
+		With("error_class", errorClass, "error_code", errorCode, "error_message", message).
+		Warn("runtime.failed")
+	return s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{
+		Status:       platformconst.StatusFailed,
+		Stage:        platformconst.StatusFailed,
+		StageMessage: message,
+	})
+}
+
+func decodeRuntimeInputManifest(raw string) (RuntimeInputManifest, error) {
+	var manifest RuntimeInputManifest
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+			return RuntimeInputManifest{}, err
+		}
+	}
+	if manifest.ParamsSnapshot == nil {
+		manifest.ParamsSnapshot = map[string]any{}
+	}
+	return manifest, nil
+}
+
+func (s *Service) hydrateRuntimeSourceAssets(input *RuntimeInputManifest) error {
+	if input == nil || s.storage == nil {
+		return nil
+	}
+	for i := range input.SourceAssets {
+		asset := &input.SourceAssets[i]
+		if strings.TrimSpace(asset.StorageKey) == "" {
+			continue
+		}
+		dataURL, err := s.storage.DataURLFromStorageKey(asset.StorageKey, asset.MimeType)
+		if err != nil {
+			return err
+		}
+		asset.SourceURL = dataURL
+		asset.PreviewURL = dataURL
+	}
+	return nil
+}
+
+func decodeJSONMap(raw string) map[string]any {
+	if raw == "" {
+		return map[string]any{}
+	}
+	var out map[string]any
+	_ = json.Unmarshal([]byte(raw), &out)
+	if out == nil {
+		out = map[string]any{}
+	}
+	return out
+}
+
+func mustMarshal(value any) string {
+	body, _ := json.Marshal(value)
+	return string(body)
+}
+
+func classifyProviderErrorClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	if isRetryableProviderError(err) {
+		return "retryable_provider"
+	}
+	return "non_retryable_provider"
+}
+
+func (s *Service) resolveProviderCode(job *models.RuntimeJob) (string, error) {
+	if job.ProviderCode != "" {
+		return job.ProviderCode, nil
+	}
+	snapshot := decodeRouteSnapshot(job.RouteSnapshot)
+	bindings, err := s.repo.ListProviderBindings(job.ProductCode, job.TaskType)
+	if err != nil {
+		return "", err
+	}
+	ranked := rankProviderBindings(bindings, snapshot)
+	if len(ranked) == 0 {
+		return "", fmt.Errorf("no enabled provider binding found for %s/%s", job.ProductCode, job.TaskType)
+	}
+	snapshot.CandidateProviders = candidateProviderCodes(ranked)
+	if snapshot.CurrentProviderIdx < 0 || snapshot.CurrentProviderIdx >= len(snapshot.CandidateProviders) {
+		snapshot.CurrentProviderIdx = 0
+	}
+	job.RouteSnapshot = encodeRouteSnapshot(snapshot)
+	return snapshot.CandidateProviders[snapshot.CurrentProviderIdx], nil
+}
+
+func (s *Service) callbackClientForJob(job *models.RuntimeJob) ProductRuntimeCallbackClient {
+	endpoint := s.productEndpoint(job.ProductCode)
+	if endpoint == nil {
+		return nil
+	}
+	return buildProductCallbackClient(endpoint)
+}
+
+func (s *Service) runtimeJobLogger(job *models.RuntimeJob) *slog.Logger {
+	if job == nil {
+		return logger.With("module", "runtime")
+	}
+	return logger.With(
+		"module", "runtime",
+		"runtime_job_id", job.ID,
+		"product_code", job.ProductCode,
+		"task_type", job.TaskType,
+		"provider_code", job.ProviderCode,
+		"provider_job_id", job.ProviderJobID,
+		"source_type", job.SourceType,
+		"source_id", job.SourceID,
+		"attempt_count", job.AttemptCount,
+	)
+}
+
+func (s *Service) productEndpoint(productCode string) *models.RuntimeProductEndpoint {
+	endpoint, err := s.repo.FindActiveProductEndpoint(productCode)
+	if err != nil {
+		return nil
+	}
+	return endpoint
+}
+
+func (s *Service) notifyProductRuntimeUpdate(job *models.RuntimeJob, input ProductUpdateRuntimeInput) error {
+	return s.enqueueCallbackDelivery(job, "runtime_update", input)
+}
+
+func (s *Service) notifyProductResults(job *models.RuntimeJob, input ProductRecordResultsInput) error {
+	return s.enqueueCallbackDelivery(job, "result", input)
+}
+
+func (s *Service) enqueueCallbackDelivery(job *models.RuntimeJob, callbackType string, payload any) error {
+	if s.callbackClientForJob(job) == nil {
+		return nil
+	}
+	body, _ := json.Marshal(payload)
+	delivery := &models.RuntimeCallbackDelivery{
+		ID:           fmt.Sprintf("cb_%d", time.Now().UnixNano()),
+		RuntimeJobID: job.ID,
+		ProductCode:  job.ProductCode,
+		SourceID:     job.SourceID,
+		CallbackType: callbackType,
+		Status:       "pending",
+		PayloadJSON:  string(body),
+		MaxAttempts:  8,
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+	if err := s.repo.CreateCallbackDelivery(delivery); err != nil {
+		return err
+	}
+	if s.queue != nil {
+		return s.queue.EnqueueCallback(delivery.ID, 0)
+	}
+	return s.HandleCallbackTask(context.Background(), delivery.ID)
+}
+
+func (s *Service) tryFallbackProvider(job *models.RuntimeJob, errorClass string) bool {
+	snapshot := decodeRouteSnapshot(job.RouteSnapshot)
+	if len(snapshot.CandidateProviders) == 0 {
+		return false
+	}
+	var currentBinding *models.RuntimeProviderBinding
+	bindings, err := s.repo.ListProviderBindings(job.ProductCode, job.TaskType)
+	if err != nil {
+		return false
+	}
+	for i := range bindings {
+		if bindings[i].ProviderCode == job.ProviderCode {
+			currentBinding = &bindings[i]
+			break
+		}
+	}
+	if !fallbackAllowed(currentBinding, errorClass) {
+		return false
+	}
+	if snapshot.CurrentProviderIdx+1 >= len(snapshot.CandidateProviders) {
+		return false
+	}
+	snapshot.CurrentProviderIdx++
+	job.ProviderCode = snapshot.CandidateProviders[snapshot.CurrentProviderIdx]
+	job.RouteSnapshot = encodeRouteSnapshot(snapshot)
+	return true
+}
+
+func (s *Service) providerCallbackURL(runtimeJobID string) string {
+	if strings.TrimSpace(s.security.EncryptionKey) == "" || strings.TrimSpace(s.comfy.CallbackBaseURL) == "" {
+		return ""
+	}
+	expiresAt := time.Now().Add(s.cfg.PollTimeout).Unix()
+	payload := runtimeJobID + ":" + strconv.FormatInt(expiresAt, 10)
+	mac := hmac.New(sha256.New, []byte(s.security.EncryptionKey))
+	mac.Write([]byte(payload))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	values := url.Values{}
+	values.Set("runtime_job_id", runtimeJobID)
+	values.Set("expires", strconv.FormatInt(expiresAt, 10))
+	values.Set("sig", sig)
+	return strings.TrimRight(s.comfy.CallbackBaseURL, "/") + "/api/v1/runtime/providers/comfyui/callback?" + values.Encode()
+}

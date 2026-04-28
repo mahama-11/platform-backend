@@ -1,0 +1,15 @@
+bin/
+dist/
+coverage/
+data/
+.env
+.DS_Store
+.idea
+
+artifacts
+
+platform-service-linux
+migrate
+config.local.yaml
+*.out
+testdata

@@ -1,0 +1,133 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"platform-service/internal/config"
+
+	"github.com/hibiken/asynq"
+)
+
+const (
+	taskTypeDispatch = "runtime:dispatch"
+	taskTypePoll     = "runtime:poll"
+	taskTypeCallback = "runtime:callback"
+)
+
+type taskPayload struct {
+	RuntimeJobID string `json:"runtime_job_id"`
+	DeliveryID   string `json:"delivery_id,omitempty"`
+}
+
+type AsynqRuntime struct {
+	client    *asynq.Client
+	server    *asynq.Server
+	mux       *asynq.ServeMux
+	queueName string
+}
+
+func NewAsynqRuntime(redisCfg config.RedisConfig, runtimeCfg config.RuntimeConfig, service *Service) (*AsynqRuntime, error) {
+	if !redisCfg.Enabled {
+		return nil, fmt.Errorf("runtime queue requires redis.enabled=true")
+	}
+	runtimeCfg = defaultRuntimeConfig(runtimeCfg)
+	redisOpt := asynq.RedisClientOpt{
+		Addr:     fmt.Sprintf("%s:%d", redisCfg.Host, redisCfg.Port),
+		Password: redisCfg.Password,
+		DB:       redisCfg.DB,
+	}
+	queueName := runtimeCfg.QueueName
+	if queueName == "" {
+		queueName = "runtime:default"
+	}
+	mux := asynq.NewServeMux()
+	mux.HandleFunc(taskTypeDispatch, func(ctx context.Context, task *asynq.Task) error {
+		payload, err := decodeTaskPayload(task)
+		if err != nil {
+			return err
+		}
+		return service.HandleDispatchTask(ctx, payload.RuntimeJobID)
+	})
+	mux.HandleFunc(taskTypePoll, func(ctx context.Context, task *asynq.Task) error {
+		payload, err := decodeTaskPayload(task)
+		if err != nil {
+			return err
+		}
+		return service.HandlePollTask(ctx, payload.RuntimeJobID)
+	})
+	mux.HandleFunc(taskTypeCallback, func(ctx context.Context, task *asynq.Task) error {
+		payload, err := decodeTaskPayload(task)
+		if err != nil {
+			return err
+		}
+		return service.HandleCallbackTask(ctx, payload.DeliveryID)
+	})
+	server := asynq.NewServer(redisOpt, asynq.Config{
+		Concurrency: runtimeCfg.WorkerConcurrency,
+		Queues: map[string]int{
+			queueName: 1,
+		},
+		RetryDelayFunc: func(n int, _ error, _ *asynq.Task) time.Duration {
+			return runtimeCfg.RetryBackoff
+		},
+	})
+	return &AsynqRuntime{
+		client:    asynq.NewClient(redisOpt),
+		server:    server,
+		mux:       mux,
+		queueName: queueName,
+	}, nil
+}
+
+func (r *AsynqRuntime) EnqueueDispatch(runtimeJobID string, delay time.Duration) error {
+	return r.enqueue(taskTypeDispatch, runtimeJobID, "", delay)
+}
+
+func (r *AsynqRuntime) EnqueuePoll(runtimeJobID string, delay time.Duration) error {
+	return r.enqueue(taskTypePoll, runtimeJobID, "", delay)
+}
+
+func (r *AsynqRuntime) EnqueueCallback(deliveryID string, delay time.Duration) error {
+	return r.enqueue(taskTypeCallback, "", deliveryID, delay)
+}
+
+func (r *AsynqRuntime) enqueue(taskType, runtimeJobID, deliveryID string, delay time.Duration) error {
+	payload, _ := json.Marshal(taskPayload{RuntimeJobID: runtimeJobID, DeliveryID: deliveryID})
+	task := asynq.NewTask(taskType, payload)
+	options := []asynq.Option{
+		asynq.Queue(r.queueName),
+		asynq.MaxRetry(0),
+	}
+	if delay > 0 {
+		options = append(options, asynq.ProcessIn(delay))
+	}
+	_, err := r.client.Enqueue(task, options...)
+	return err
+}
+
+func (r *AsynqRuntime) Start() error {
+	go func() {
+		_ = r.server.Run(r.mux)
+	}()
+	return nil
+}
+
+func (r *AsynqRuntime) Shutdown() {
+	if r.server != nil {
+		r.server.Shutdown()
+	}
+	if r.client != nil {
+		_ = r.client.Close()
+	}
+}
+
+func decodeTaskPayload(task *asynq.Task) (*taskPayload, error) {
+	var payload taskPayload
+	if err := json.Unmarshal(task.Payload(), &payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
+}
