@@ -5,7 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"platform-service/internal/app"
 )
@@ -26,9 +30,7 @@ import (
 // @in header
 // @name X-Internal-Timestamp
 func main() {
-	if err := runServer(os.Args[1:], os.Getenv, app.New, func(application *app.App, addr string) error {
-		return application.Router.Run(addr)
-	}); err != nil {
+	if err := runServer(os.Args[1:], os.Getenv, app.New, nil); err != nil {
 		log.Fatalf("platform service exited with error: %v", err)
 	}
 }
@@ -48,9 +50,41 @@ func runServer(args []string, getenvFn func(string) string, newAppFn func(string
 		}()
 	}
 	addr := fmt.Sprintf("%s:%d", application.Config.Host, application.Config.Port)
-	if err := runFn(application, addr); err != nil {
-		return err
+
+	// 支持测试注入自定义 runFn
+	if runFn != nil {
+		return runFn(application, addr)
 	}
+
+	// 生产模式：使用 http.Server + 优雅停服
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: application.Router,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("platform service listening on %s", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-errCh:
+		return fmt.Errorf("server listen error: %w", err)
+	case sig := <-quit:
+		log.Printf("received signal %v, shutting down gracefully...", sig)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server shutdown error: %w", err)
+	}
+	log.Println("platform service stopped gracefully")
 	return nil
 }
 

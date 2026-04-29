@@ -208,7 +208,7 @@ func (p *comfyUIBridgeProvider) postJSON(ctx context.Context, path string, paylo
 		return newRetryableProviderError(fmt.Sprintf("comfyui bridge request failed: %v", err))
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024))
 	if err != nil {
 		return newRetryableProviderError(fmt.Sprintf("read comfyui bridge response: %v", err))
 	}
@@ -236,7 +236,7 @@ func (p *comfyUIBridgeProvider) getJSON(ctx context.Context, path string, out an
 		return newRetryableProviderError(fmt.Sprintf("comfyui bridge poll failed: %v", err))
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024))
 	if err != nil {
 		return newRetryableProviderError(fmt.Sprintf("read comfyui bridge poll response: %v", err))
 	}

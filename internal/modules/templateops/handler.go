@@ -26,6 +26,7 @@ func (h *Handler) ListCatalog(c *gin.Context) {
 		ProductCode:   c.Query("product_code"),
 		Query:         c.Query("query"),
 		Locale:        c.Query("locale"),
+		ToolSlug:      c.Query("tool_slug"),
 		Limit:         limit,
 		Offset:        offset,
 		PublishedOnly: c.Query("published_only") == "true",

@@ -34,6 +34,9 @@ type ProviderSourceAsset struct {
 type RuntimePromptSnapshot struct {
 	Provider       string `json:"provider"`
 	Model          string `json:"model"`
+	SystemPrompt   string `json:"system_prompt"`
+	StylePrompt    string `json:"style_prompt"`
+	UserPrompt     string `json:"user_prompt"`
 	PromptTemplate string `json:"prompt_template"`
 }
 

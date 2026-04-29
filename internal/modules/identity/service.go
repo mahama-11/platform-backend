@@ -21,6 +21,9 @@ var (
 	ErrEmailExists        = errors.New("email already exists")
 )
 
+// bcryptCost 设置为 12，高于默认值 10，在安全性和性能间取得平衡。
+const bcryptCost = 12
+
 type Service struct {
 	repo   *repository.CoreRepository
 	access *access.Service
@@ -127,7 +130,7 @@ func (s *Service) Register(input RegisterInput) (*AuthResult, error) {
 		return nil, lookupErr
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(input.Password), bcryptCost)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +370,7 @@ func (s *Service) CreateUser(input UpsertUserInput) (*UserDirectoryRecord, error
 	if strings.TrimSpace(password) == "" {
 		password = "ChangeMe123"
 	}
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +438,7 @@ func (s *Service) UpdateUser(userID string, input UpsertUserInput) (*UserDirecto
 	}
 	updates["is_platform_admin"] = input.IsPlatformAdmin
 	if password := strings.TrimSpace(input.Password); password != "" {
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 		if err != nil {
 			return nil, err
 		}

@@ -45,7 +45,7 @@ func New(
 		serviceName = "platform-service"
 	}
 	r.Use(otelgin.Middleware(serviceName))
-	r.Use(middleware.RequestContext(), middleware.Metrics(cfg.Monitoring.Metrics.Namespace, cfg.Monitoring.Metrics.Subsystem), middleware.AccessLog(), gin.Recovery())
+	r.Use(middleware.RequestContext(), middleware.BodySizeLimit(4*1024*1024), middleware.RateLimit(cfg.Security.RateLimitPerSecond, cfg.Security.RateLimitBurst), middleware.Metrics(cfg.Monitoring.Metrics.Namespace, cfg.Monitoring.Metrics.Subsystem), middleware.AccessLog(), gin.Recovery())
 
 	healthHandler := func(c *gin.Context) {
 		response.JSONSuccess(c, gin.H{"service": "v-platform-backend", "status": "ok"})

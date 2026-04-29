@@ -406,9 +406,6 @@ func (s *Service) RecordChannelCharge(input RecordChannelChargeInput) (*RecordCh
 		if snapshot.Currency == "" {
 			snapshot.Currency = defaultString(input.Currency, firstNonEmpty(partner.DefaultCurrency, "CNY"))
 		}
-		if err := s.repo.CreateChannelProfitSnapshot(snapshot); err != nil {
-			return nil, err
-		}
 		commissionable := calculateChannelCommissionableAmountByVersion(resolved.Version, snapshot)
 		if commissionable <= 0 {
 			return &RecordChannelChargeResult{
@@ -486,9 +483,6 @@ func (s *Service) RecordChannelCharge(input RecordChannelChargeInput) (*RecordCh
 			earnedAt := now
 			ledger.EarnedAt = &earnedAt
 		}
-		if err := s.repo.CreateChannelCommissionLedger(ledger); err != nil {
-			return nil, err
-		}
 		resultSnapshot, _ := json.Marshal(map[string]any{
 			"policy_id":             resolved.Policy.ID,
 			"policy_version_id":     resolved.Version.ID,
@@ -498,14 +492,29 @@ func (s *Service) RecordChannelCharge(input RecordChannelChargeInput) (*RecordCh
 			"commissionable_amount": commissionable,
 			"commission_amount":     commissionAmount,
 		})
-		if err := s.createChannelPolicyResolutionAudit(input, binding, resolved, string(resultSnapshot)); err != nil {
+		// NOTE: snapshot、ledger、audit 必须在同一事务内，确保原子性
+		var createdLedger *models.ChannelCommissionLedger
+		if err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+			if err := tx.Create(snapshot).Error; err != nil {
+				return err
+			}
+			ledger.ProfitSnapshotID = snapshot.ID
+			if err := tx.Create(ledger).Error; err != nil {
+				return err
+			}
+			if err := s.createChannelPolicyResolutionAuditTx(tx, input, binding, resolved, string(resultSnapshot)); err != nil {
+				return err
+			}
+			createdLedger = ledger
+			return nil
+		}); err != nil {
 			return nil, err
 		}
-		logger.With("event_id", input.EventID, "ledger_id", ledger.ID, "channel_partner_id", ledger.ChannelPartnerID).Info("incentive.channel.charge.recorded")
+		logger.With("event_id", input.EventID, "ledger_id", createdLedger.ID, "channel_partner_id", createdLedger.ChannelPartnerID).Info("incentive.channel.charge.recorded")
 		return &RecordChannelChargeResult{
 			Matched:   true,
-			Status:    ledger.Status,
-			Ledger:    ledger,
+			Status:    createdLedger.Status,
+			Ledger:    createdLedger,
 			BindingID: binding.ID,
 			ChannelID: binding.ChannelPartnerID,
 			PolicyID:  resolved.Policy.ID,

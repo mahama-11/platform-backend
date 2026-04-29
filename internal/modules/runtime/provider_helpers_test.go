@@ -45,10 +45,15 @@ func TestVolcengineHelperFunctions(t *testing.T) {
 	sampleBase64 := base64.StdEncoding.EncodeToString([]byte("this-is-a-long-enough-payload-for-base64-check"))
 	if buildVolcenginePrompt(ProviderJobRequest{
 		Input: RuntimeInputManifest{
-			PromptSnapshot: RuntimePromptSnapshot{PromptTemplate: "template"},
+			PromptSnapshot: RuntimePromptSnapshot{
+				SystemPrompt:   "system prompt",
+				StylePrompt:    "style prompt",
+				UserPrompt:     "user prompt",
+				PromptTemplate: "legacy prompt",
+			},
 			ParamsSnapshot: map[string]any{"prompt": "actual prompt"},
 		},
-	}) != "template\n\nactual prompt" {
+	}) != "system prompt\n\nstyle prompt\n\nuser prompt\n\nactual prompt" {
 		t.Fatalf("unexpected prompt build")
 	}
 	if _, err := extractDataURLPayload("invalid"); err == nil {

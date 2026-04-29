@@ -19,6 +19,7 @@ This guide defines the current scope and engineering baseline of `v-platform-bac
 - [RUNTIME_AND_CHARGE_PLATFORMIZATION.md](architecture/RUNTIME_AND_CHARGE_PLATFORMIZATION.md): runtime job / charge session 平台化落地边界与 internal API
 - [ASSET_STORAGE_REGISTRY_AND_IMPORT.md](architecture/ASSET_STORAGE_REGISTRY_AND_IMPORT.md): 平台存储资产注册、import-local 接口与模板示例导入规范
 - [DB_MIGRATION_GOVERNANCE.md](../../docs/architecture/DB_MIGRATION_GOVERNANCE.md): platform/menu 当前数据库迁移风险、临时补丁与后续治理方向
+- [CODE_QUALITY_REVIEW_2026_04.md](specs/CODE_QUALITY_REVIEW_2026_04.md): 代码质量审查记录（并发安全、事务原子性、安全加固）
 
 ## 2. Intended Capability Scope
 
@@ -71,6 +72,7 @@ Should not belong here:
 - Repository queries are part of the same contract surface: if handlers and services already standardize on shared status, direction, subject-type, or settlement-mode constants, repository filters should reuse those exact constants as well so behavior cannot drift between orchestration code and persistence lookups.
 - The same rule now extends into incentive and channel-finance flows as well: referral triggers, earned/pending/redeemed-style lifecycle states, settlement-in-progress transitions, and channel policy matching primitives should converge on shared constants wherever the same value appears in multiple write paths, resolution steps, and settlement updates.
 - Service-layer critical paths should not rely on handler logs alone: long or stateful flows such as runtime dispatch/poll/result persistence, metering ingest/finalize/reverse, wallet ledger posting, allowance reset, and lifecycle jobs should emit structured begin/success/failure logs with stable identifiers so operators can trace where a request or async task stopped without reverse-engineering database state first.
+- Startup and edge hardening should now be treated as part of the default platform baseline rather than follow-up work: non-debug configs must reject insecure default secrets, HTTP ingress should enforce body size and rate limits, JWT parsing must reject unexpected signing methods, and shared-secret middleware must use constant-time comparison for internal service authentication.
 - First-wave internal APIs now also carry Swagger/OpenAPI annotations, and `./scripts/gen-swagger-internal.sh` is the committed generation entrypoint for the current internal spec. Browser-readable docs are also exposed at `/docs`, `/api/v1/docs/internal-access`, and `/api/v1/docs/error-codes`.
 - Config shape now intentionally follows the broader `v-backend` pattern (`app/database/redis/security/oauth/monitoring`) even though only part of it is consumed today.
 - Database and Redis initialization now consume the real infrastructure config shape and no longer stay at config-only placeholder level.

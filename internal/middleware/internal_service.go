@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"io"
 	"strconv"
 	"strings"
@@ -17,7 +18,9 @@ import (
 
 func RequireInternalService(secret string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if c.GetHeader(platformconst.HeaderInternalServiceSecret) == secret {
+		// 使用常量时间比较防止时序攻击
+		headerSecret := c.GetHeader(platformconst.HeaderInternalServiceSecret)
+		if headerSecret != "" && subtle.ConstantTimeCompare([]byte(headerSecret), []byte(secret)) == 1 {
 			c.Set(platformconst.CtxInternalServiceName, platformconst.InternalServiceLegacySecret)
 			c.Set(platformconst.CtxInternalAuthMode, platformconst.InternalAuthModeSharedSecret)
 			c.Writer.Header().Set(platformconst.HeaderInternalAuthMode, platformconst.InternalAuthModeSharedSecret)

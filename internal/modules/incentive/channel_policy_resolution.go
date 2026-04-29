@@ -661,6 +661,10 @@ func calculateRateBpsAmountWithRounding(base, rateBps int64, roundingMode string
 }
 
 func (s *Service) createChannelPolicyResolutionAudit(input RecordChannelChargeInput, binding *models.ChannelPartnerBinding, resolved *resolvedChannelPolicy, resultSnapshot string) error {
+	return s.createChannelPolicyResolutionAuditTx(s.repo.DB(), input, binding, resolved, resultSnapshot)
+}
+
+func (s *Service) createChannelPolicyResolutionAuditTx(tx *gorm.DB, input RecordChannelChargeInput, binding *models.ChannelPartnerBinding, resolved *resolvedChannelPolicy, resultSnapshot string) error {
 	if resolved == nil {
 		return nil
 	}
@@ -685,7 +689,7 @@ func (s *Service) createChannelPolicyResolutionAudit(input RecordChannelChargeIn
 		Metadata:           input.Metadata,
 		CreatedAt:          time.Now(),
 	}
-	return s.repo.CreateChannelPolicyResolutionAudit(item)
+	return tx.Create(item).Error
 }
 
 func firstID(item *models.ChannelCommissionPolicyAssignment) string {

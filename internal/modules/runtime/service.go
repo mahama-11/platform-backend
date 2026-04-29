@@ -200,6 +200,10 @@ func (s *Service) CreateRuntimeJob(input CreateRuntimeJobInput) (*models.Runtime
 			return nil, err
 		}
 	}
+	// NOTE: 先检查 queue 是否配置，避免创建孤儿记录
+	if s.queue == nil {
+		return nil, errors.New("runtime queue is not configured")
+	}
 	item := &models.RuntimeJob{
 		ID:              utils.GenerateID(),
 		ProductCode:     input.ProductCode,
@@ -228,16 +232,22 @@ func (s *Service) CreateRuntimeJob(input CreateRuntimeJobInput) (*models.Runtime
 		timeoutAt := time.Now().Add(time.Duration(input.TimeoutSeconds) * time.Second)
 		item.TimeoutAt = &timeoutAt
 	}
-	if err := s.repo.CreateRuntimeJob(item); err != nil {
+	// NOTE: 创建作业和入队必须在同一事务内，入队失败时回滚 DB 记录
+	var created *models.RuntimeJob
+	if err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(item).Error; err != nil {
+			return err
+		}
+		if err := s.queue.EnqueueDispatch(item.ID, 0); err != nil {
+			// 入队失败，事务回滚删除孤儿记录
+			return err
+		}
+		created = item
+		return nil
+	}); err != nil {
 		return nil, err
 	}
-	if s.queue == nil {
-		return nil, errors.New("runtime queue is not configured")
-	}
-	if err := s.queue.EnqueueDispatch(item.ID, 0); err != nil {
-		return nil, err
-	}
-	return item, nil
+	return created, nil
 }
 
 func (s *Service) GetRuntimeJob(id string) (*RuntimeJobDetail, error) {
@@ -287,6 +297,9 @@ func (s *Service) UpdateRuntimeJob(id string, input UpdateRuntimeJobInput) (*mod
 	}
 	now := time.Now()
 	if input.Status != "" {
+		if err := validateRuntimeJobStatusTransition(item.Status, input.Status); err != nil {
+			return nil, err
+		}
 		item.Status = input.Status
 	}
 	if input.Stage != "" {
@@ -446,6 +459,9 @@ func (s *Service) UpdateChargeSession(id string, input UpdateChargeSessionInput)
 	}
 	now := time.Now()
 	if input.Status != "" {
+		if err := validateChargeSessionStatusTransition(item.Status, input.Status); err != nil {
+			return nil, err
+		}
 		item.Status = input.Status
 	}
 	if input.ReservationID != "" {
@@ -524,6 +540,55 @@ func defaultInt(value, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+// --- 状态机转移校验 ---
+
+// RuntimeJob 合法状态转移白名单
+var validRuntimeJobTransitions = map[string][]string{
+	platformconst.StatusQueued:     {platformconst.StatusProcessing, platformconst.StatusCanceled, platformconst.StatusFailed},
+	platformconst.StatusProcessing: {platformconst.StatusCompleted, platformconst.StatusFailed, platformconst.StatusCanceled},
+	platformconst.StatusFailed:     {platformconst.StatusQueued}, // 允许重试
+}
+
+func validateRuntimeJobStatusTransition(from, to string) error {
+	if from == to {
+		return nil
+	}
+	allowed, ok := validRuntimeJobTransitions[from]
+	if !ok {
+		return fmt.Errorf("runtime job status %q is terminal, cannot transition to %q", from, to)
+	}
+	for _, s := range allowed {
+		if s == to {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid runtime job status transition: %q -> %q", from, to)
+}
+
+// ChargeSession 合法状态转移白名单
+var validChargeSessionTransitions = map[string][]string{
+	platformconst.StatusCreated:              {platformconst.ReservationStatusReserved, platformconst.StatusCanceled, platformconst.StatusFailed},
+	platformconst.ReservationStatusReserved:  {platformconst.SettlementStatusSettled, platformconst.ReservationStatusReleased, platformconst.StatusFailed},
+	platformconst.ReservationStatusReleased:  {},
+	platformconst.SettlementStatusSettled:     {},
+}
+
+func validateChargeSessionStatusTransition(from, to string) error {
+	if from == to {
+		return nil
+	}
+	allowed, ok := validChargeSessionTransitions[from]
+	if !ok {
+		return fmt.Errorf("charge session status %q is terminal, cannot transition to %q", from, to)
+	}
+	for _, s := range allowed {
+		if s == to {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid charge session status transition: %q -> %q", from, to)
 }
 
 func defaultInt64(value, fallback int64) int64 {

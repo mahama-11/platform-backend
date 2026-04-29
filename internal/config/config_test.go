@@ -16,6 +16,9 @@ database:
   sqlite_path: data/custom.db
 security:
   jwt_secret: unit-test-secret
+  kong_shared_secret: unit-test-kong
+  internal_service_secret: unit-test-internal
+  encryption_key: unit-test-encryption-key-32ch
 `)
 	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)

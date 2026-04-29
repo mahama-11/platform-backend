@@ -36,7 +36,7 @@ func TestNewAppWithMinimalSQLiteConfig(t *testing.T) {
 	configPath := filepath.Join(tempDir, "config.test.yaml")
 	sqlitePath := filepath.Join(tempDir, "platform.db")
 	content := []byte(`
-gin_mode: test
+gin_mode: debug
 log_level: info
 runtime:
   worker_enabled: false

@@ -164,18 +164,19 @@ type TasksConfig struct {
 }
 
 type DatabaseConfig struct {
-	Driver              string `mapstructure:"driver"`
-	Host                string `mapstructure:"host"`
-	Port                int    `mapstructure:"port"`
-	User                string `mapstructure:"user"`
-	Password            string `mapstructure:"password"`
-	DBName              string `mapstructure:"dbname"`
-	SSLMode             string `mapstructure:"sslmode"`
-	MaxOpenConns        int    `mapstructure:"max_open_conns"`
-	MaxIdleConns        int    `mapstructure:"max_idle_conns"`
-	SQLitePath          string `mapstructure:"sqlite_path"`
-	AutoMigrateEnabled  bool   `mapstructure:"auto_migrate_enabled"`
-	AllowStartupMigrate bool   `mapstructure:"allow_startup_migrate_in_non_dev"`
+	Driver              string        `mapstructure:"driver"`
+	Host                string        `mapstructure:"host"`
+	Port                int           `mapstructure:"port"`
+	User                string        `mapstructure:"user"`
+	Password            string        `mapstructure:"password"`
+	DBName              string        `mapstructure:"dbname"`
+	SSLMode             string        `mapstructure:"sslmode"`
+	MaxOpenConns        int           `mapstructure:"max_open_conns"`
+	MaxIdleConns        int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime     time.Duration `mapstructure:"conn_max_lifetime"`
+	SQLitePath          string        `mapstructure:"sqlite_path"`
+	AutoMigrateEnabled  bool          `mapstructure:"auto_migrate_enabled"`
+	AllowStartupMigrate bool          `mapstructure:"allow_startup_migrate_in_non_dev"`
 }
 
 type RedisConfig struct {
@@ -264,7 +265,45 @@ func Load(configFile string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	if err := validateSecurityConfig(cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+// insecureDefaultSecrets 列出不可用于非 debug 模式的已知默认密钥值。
+var insecureDefaultSecrets = []string{
+	"platform-dev-secret",
+	"platform-kong-shared-secret",
+	"platform-internal-secret",
+	"platform-encryption-key-change-me",
+}
+
+func validateSecurityConfig(cfg Config) error {
+	if strings.EqualFold(cfg.GinMode, "debug") {
+		return nil
+	}
+	secrets := []struct {
+		name  string
+		value string
+	}{
+		{"security.jwt_secret", cfg.Security.JWTSecret},
+		{"security.kong_shared_secret", cfg.Security.KongSharedSecret},
+		{"security.internal_service_secret", cfg.Security.InternalServiceSecret},
+		{"security.encryption_key", cfg.Security.EncryptionKey},
+	}
+	for _, s := range secrets {
+		for _, insecure := range insecureDefaultSecrets {
+			if s.value == insecure {
+				return fmt.Errorf("SECURITY: %s is using insecure default value %q in non-debug mode; override it via config file or PLATFORM_%s env var",
+					s.name, insecure, strings.ToUpper(strings.ReplaceAll(s.name, ".", "_")))
+			}
+		}
+		if s.value == "" {
+			return fmt.Errorf("SECURITY: %s must not be empty in non-debug mode", s.name)
+		}
+	}
+	return nil
 }
 
 func setDefaults(v *viper.Viper) {
@@ -308,6 +347,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("database.sslmode", "disable")
 	v.SetDefault("database.max_open_conns", 25)
 	v.SetDefault("database.max_idle_conns", 5)
+	v.SetDefault("database.conn_max_lifetime", "5m")
 	v.SetDefault("database.sqlite_path", filepath.Join("data", "platform.db"))
 	v.SetDefault("database.auto_migrate_enabled", false)
 	v.SetDefault("database.allow_startup_migrate_in_non_dev", false)

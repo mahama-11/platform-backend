@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -160,4 +161,132 @@ func identityConfigForMiddleware() config.Config {
 	cfg.Security.JWTSecret = "jwt-secret"
 	cfg.Security.JWTExpiration = time.Hour
 	return cfg
+}
+
+// --------------- RateLimit / BodySizeLimit / PerIPRateLimit tests ---------------
+
+func TestRateLimit_AllowsWithinBurst(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RateLimit(1, 3))
+	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	for i := 0; i < 3; i++ {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d", i, w.Code)
+		}
+	}
+}
+
+func TestRateLimit_RejectsAfterBurstExhausted(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(RateLimit(1, 2))
+	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	// First 2 should succeed (burst=2).
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d", i, w.Code)
+		}
+	}
+
+	// Subsequent requests should be rejected with 429.
+	got429 := false
+	for i := 0; i < 5; i++ {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusTooManyRequests {
+			got429 = true
+			break
+		}
+	}
+	if !got429 {
+		t.Fatal("expected at least one 429 after burst exhausted")
+	}
+}
+
+func TestBodySizeLimit_AllowsSmallBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(BodySizeLimit(1024))
+	r.POST("/upload", func(c *gin.Context) {
+		body, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.String(http.StatusRequestEntityTooLarge, "read error")
+			return
+		}
+		c.String(http.StatusOK, fmt.Sprintf("read %d bytes", len(body)))
+	})
+
+	payload := bytes.Repeat([]byte("a"), 100)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(payload))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for small body, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBodySizeLimit_RejectsOversizedBody(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(BodySizeLimit(100))
+	r.POST("/upload", func(c *gin.Context) {
+		_, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.String(http.StatusRequestEntityTooLarge, "body too large")
+			return
+		}
+		c.String(http.StatusOK, "ok")
+	})
+
+	payload := bytes.Repeat([]byte("x"), 200)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/upload", bytes.NewReader(payload))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for oversized body, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPerIPRateLimit_IsolatesIPs(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(PerIPRateLimit(1, 1))
+	r.GET("/ping", func(c *gin.Context) { c.String(http.StatusOK, "ok") })
+
+	// First request from IP "1.2.3.4" — should succeed.
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.RemoteAddr = "1.2.3.4:12345"
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request from 1.2.3.4: expected 200, got %d", w.Code)
+	}
+
+	// First request from IP "5.6.7.8" — should also succeed (different bucket).
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.RemoteAddr = "5.6.7.8:12345"
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first request from 5.6.7.8: expected 200, got %d", w.Code)
+	}
+
+	// Second rapid request from "1.2.3.4" — should get 429.
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.RemoteAddr = "1.2.3.4:12345"
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request from 1.2.3.4: expected 429, got %d", w.Code)
+	}
 }

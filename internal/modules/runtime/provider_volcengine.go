@@ -164,7 +164,7 @@ func (p *volcengineImageProvider) generateImages(ctx context.Context, payload vo
 		return nil, newRetryableProviderError(fmt.Sprintf("volcengine request failed: %v", err))
 	}
 	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024)) // 50MB max API response
 	if err != nil {
 		return nil, newRetryableProviderError(fmt.Sprintf("volcengine response read failed: %v", err))
 	}
@@ -182,13 +182,23 @@ func (p *volcengineImageProvider) generateImages(ctx context.Context, payload vo
 }
 
 func buildVolcenginePrompt(req ProviderJobRequest) string {
-	parts := make([]string, 0, 2)
-	if value := strings.TrimSpace(req.Input.PromptSnapshot.PromptTemplate); value != "" {
-		parts = append(parts, value)
+	parts := make([]string, 0, 4)
+	appendUnique := func(value string) {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return
+		}
+		for _, existing := range parts {
+			if existing == trimmed {
+				return
+			}
+		}
+		parts = append(parts, trimmed)
 	}
-	if value := strings.TrimSpace(stringMapValue(req.Input.ParamsSnapshot, "prompt")); value != "" {
-		parts = append(parts, value)
-	}
+	appendUnique(req.Input.PromptSnapshot.SystemPrompt)
+	appendUnique(req.Input.PromptSnapshot.StylePrompt)
+	appendUnique(req.Input.PromptSnapshot.UserPrompt)
+	appendUnique(stringMapValue(req.Input.ParamsSnapshot, "prompt"))
 	return strings.Join(parts, "\n\n")
 }
 
@@ -257,9 +267,14 @@ func (p *volcengineImageProvider) fetchImageAsDataURL(ctx context.Context, sourc
 	if resp.StatusCode >= 400 {
 		return "", classifyVolcengineError(fmt.Sprintf("fetch source image failed: status=%d", resp.StatusCode), resp.StatusCode)
 	}
-	body, err := io.ReadAll(resp.Body)
+	// 限制下载大小为 20MB，防止恶意或异常大图 OOM
+	const maxImageSize = 20 * 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxImageSize+1))
 	if err != nil {
 		return "", newRetryableProviderError(fmt.Sprintf("read source image failed: %v", err))
+	}
+	if len(body) > maxImageSize {
+		return "", newNonRetryableProviderError("source image exceeds 20MB size limit")
 	}
 	if len(body) == 0 {
 		return "", newNonRetryableProviderError("source image response is empty")

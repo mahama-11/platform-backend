@@ -96,7 +96,11 @@ func ConnectDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	}
 	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
 	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
-	sqlDB.SetConnMaxLifetime(5 * time.Minute)
+	connMaxLifetime := cfg.ConnMaxLifetime
+	if connMaxLifetime <= 0 {
+		connMaxLifetime = 5 * time.Minute
+	}
+	sqlDB.SetConnMaxLifetime(connMaxLifetime)
 
 	return db, nil
 }

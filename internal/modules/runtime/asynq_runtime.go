@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"platform-service/internal/config"
+	"platform-service/pkg/logger"
 
 	"github.com/hibiken/asynq"
 )
@@ -109,10 +110,24 @@ func (r *AsynqRuntime) enqueue(taskType, runtimeJobID, deliveryID string, delay 
 }
 
 func (r *AsynqRuntime) Start() error {
+	// 使用 channel 传播 server.Run() 的初始化错误
+	errCh := make(chan error, 1)
 	go func() {
-		_ = r.server.Run(r.mux)
+		errCh <- r.server.Run(r.mux)
 	}()
-	return nil
+	// 短暂等待以捕获立即失败（如 Redis 连接失败）
+	select {
+	case err := <-errCh:
+		return fmt.Errorf("asynq server failed to start: %w", err)
+	case <-time.After(500 * time.Millisecond):
+		// 启动成功，后台运行
+		go func() {
+			if err := <-errCh; err != nil {
+				logger.Get().Error("asynq server stopped unexpectedly", "error", err)
+			}
+		}()
+		return nil
+	}
 }
 
 func (r *AsynqRuntime) Shutdown() {

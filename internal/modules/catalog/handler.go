@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"errors"
 	audit "platform-service/internal/modules/audit"
 	"platform-service/internal/repository"
 	"platform-service/internal/telemetry"
@@ -8,6 +9,7 @@ import (
 	"platform-service/pkg/response"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type Handler struct {
@@ -70,6 +72,10 @@ func (h *Handler) Offerings(c *gin.Context) {
 	item, err := h.service.Offerings(productCode, h.financeRepo)
 	if err != nil {
 		span.RecordError(err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			response.WriteObservedSemanticError(c, err, response.CodeNotFound, "product not found", "CATALOG_PRODUCT_NOT_FOUND", "Verify the product_code before retrying.")
+			return
+		}
 		response.WriteObservedSemanticError(c, err, response.CodeInternalError, "failed to load offerings", "CATALOG_OFFERINGS_GET_FAILED", "Check platform logs with request_id and product_code to identify the offerings aggregation failure.")
 		return
 	}

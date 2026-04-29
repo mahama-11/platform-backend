@@ -43,6 +43,7 @@ type ListCatalogInput struct {
 	ProductCode   string
 	Query         string
 	Locale        string
+	ToolSlug      string
 	Limit         int
 	Offset        int
 	PublishedOnly bool
@@ -356,6 +357,13 @@ func (s *Service) ListCatalog(ctx context.Context, input ListCatalogInput) (*Tem
 	if keyword := strings.TrimSpace(input.Query); keyword != "" {
 		like := "%" + keyword + "%"
 		query = query.Where("template_ref LIKE ? OR template_id LIKE ? OR slug LIKE ? OR name LIKE ? OR summary LIKE ?", like, like, like, like, like)
+	}
+	if toolSlug := strings.TrimSpace(input.ToolSlug); toolSlug != "" {
+		routeLike := "%/" + toolSlug + "\"%"
+		camelLike := "%\"toolSlug\":\"" + toolSlug + "\"%"
+		snakeLike := "%\"tool_slug\":\"" + toolSlug + "\"%"
+		query = query.Where("(slug = ? OR raw_json LIKE ? OR detail_json LIKE ? OR raw_json LIKE ? OR detail_json LIKE ? OR raw_json LIKE ? OR detail_json LIKE ?)",
+			toolSlug, routeLike, routeLike, camelLike, camelLike, snakeLike, snakeLike)
 	}
 	if input.PublishedOnly {
 		query = query.Where("publish_status = ?", "published")

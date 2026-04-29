@@ -117,3 +117,123 @@ func performControlRaw(t *testing.T, fn func(*gin.Context), method, path string,
 	}
 	return w
 }
+
+func performControlParamKey(t *testing.T, fn func(*gin.Context), path, key, id string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	req := httptest.NewRequest(http.MethodPost, path, nil)
+	c.Request = req
+	c.Params = gin.Params{{Key: key, Value: id}}
+	fn(c)
+	return w
+}
+
+func TestControlHandlerQuotaGrantPolicyCRUD(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := newControlTestServiceWithPolicies(t)
+	handler := NewHandler(service, nil)
+
+	// Create
+	createResp := performControlJSON(t, handler.CreateQuotaGrantPolicy, http.MethodPost, "/policies/quota", CreateQuotaGrantPolicyInput{
+		ProductCode:      "product-h",
+		PackageCode:      "pkg-h1",
+		BillableItemCode: "IMAGE_GEN",
+		GrantMode:        "on_activation",
+		Units:            100,
+	})
+	if createResp.Code != 201 {
+		t.Fatalf("expected 201, got %d: %s", createResp.Code, createResp.Body.String())
+	}
+	var envelope map[string]any
+	_ = json.Unmarshal(createResp.Body.Bytes(), &envelope)
+	data := envelope["data"].(map[string]any)
+	policyID := data["id"].(string)
+
+	// List
+	performControlQuery(t, handler.ListQuotaGrantPolicies, "/policies/quota?product_code=product-h&package_code=pkg-h1")
+
+	// Update
+	updateResp := performControlJSON(t, func(c *gin.Context) {
+		c.Params = gin.Params{{Key: "policyID", Value: policyID}}
+		handler.UpdateQuotaGrantPolicy(c)
+	}, http.MethodPut, "/policies/quota/"+policyID, UpdateQuotaGrantPolicyInput{
+		Units: 200,
+	})
+	if updateResp.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", updateResp.Code, updateResp.Body.String())
+	}
+
+	// Delete
+	deleteResp := performControlParamKey(t, handler.DeleteQuotaGrantPolicy, "/policies/quota/"+policyID, "policyID", policyID)
+	if deleteResp.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", deleteResp.Code, deleteResp.Body.String())
+	}
+}
+
+func TestControlHandlerPackageCapabilityPolicyCRUD(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := newControlTestServiceWithPolicies(t)
+	handler := NewHandler(service, nil)
+
+	// Create
+	createResp := performControlJSON(t, handler.CreatePackageCapabilityPolicy, http.MethodPost, "/policies/capability", CreatePackageCapabilityPolicyInput{
+		ProductCode:    "product-hc",
+		PackageCode:    "pkg-hc1",
+		CapabilityCode: "WATERMARK",
+		GrantValue:     "enabled",
+	})
+	if createResp.Code != 201 {
+		t.Fatalf("expected 201, got %d: %s", createResp.Code, createResp.Body.String())
+	}
+	var envelope map[string]any
+	_ = json.Unmarshal(createResp.Body.Bytes(), &envelope)
+	data := envelope["data"].(map[string]any)
+	policyID := data["id"].(string)
+
+	// List
+	performControlQuery(t, handler.ListPackageCapabilityPolicies, "/policies/capability?product_code=product-hc&package_code=pkg-hc1")
+
+	// Update
+	updateResp := performControlJSON(t, func(c *gin.Context) {
+		c.Params = gin.Params{{Key: "policyID", Value: policyID}}
+		handler.UpdatePackageCapabilityPolicy(c)
+	}, http.MethodPut, "/policies/capability/"+policyID, UpdatePackageCapabilityPolicyInput{
+		GrantValue: "premium",
+	})
+	if updateResp.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", updateResp.Code, updateResp.Body.String())
+	}
+
+	// Delete
+	deleteResp := performControlParamKey(t, handler.DeletePackageCapabilityPolicy, "/policies/capability/"+policyID, "policyID", policyID)
+	if deleteResp.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", deleteResp.Code, deleteResp.Body.String())
+	}
+}
+
+func TestControlHandlerGrantAndResolveCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := newControlTestServiceWithPolicies(t)
+	handler := NewHandler(service, nil)
+
+	// GrantCapability
+	grantResp := performControlJSON(t, handler.GrantCapability, http.MethodPost, "/capability/grant", GrantCapabilityInput{
+		ProductCode:        "product-hg",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-hg",
+		CapabilityCode:     "WATERMARK",
+		GrantValue:         "enabled",
+		SourceType:         "pkg",
+		SourceID:           "pkg-1",
+	})
+	if grantResp.Code != 201 {
+		t.Fatalf("expected 201, got %d: %s", grantResp.Code, grantResp.Body.String())
+	}
+
+	// ResolveCapability
+	resolveResp := performControlQuery(t, handler.ResolveCapability, "/capability/resolve?product_code=product-hg&billing_subject_type=organization&billing_subject_id=org-hg&capability_code=WATERMARK")
+	if resolveResp.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", resolveResp.Code, resolveResp.Body.String())
+	}
+}

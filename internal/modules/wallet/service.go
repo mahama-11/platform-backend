@@ -14,6 +14,7 @@ import (
 	"platform-service/pkg/utils"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrInsufficientWalletBalance = errors.New("insufficient wallet balance")
@@ -593,16 +594,23 @@ func (s *Service) walletAccountMatchesProduct(assetCode, productCode string) (bo
 func (s *Service) ExpireWalletBuckets(assetCode string, now time.Time) ([]models.WalletBucket, error) {
 	log := logger.With("asset_code", assetCode, "now", now.Format(time.RFC3339))
 	log.Info("wallet.bucket.expire.begin")
-	items, err := s.repo.ListExpirableWalletBuckets(now, assetCode)
-	if err != nil {
-		log.Error("wallet.bucket.expire.lookup_failed", "error", err)
-		return nil, err
-	}
-	if len(items) == 0 {
-		log.Info("wallet.bucket.expire.noop")
-		return nil, nil
-	}
-	err = s.repo.DB().Transaction(func(tx *gorm.DB) error {
+	var expired []models.WalletBucket
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		// NOTE: 查询和锁定待过期桶必须在事务内，防止并发修改
+		var items []models.WalletBucket
+		q := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("status = ? AND expires_at IS NOT NULL AND expires_at <= ? AND balance > 0", platformconst.StatusActive, now)
+		if assetCode != "" {
+			q = q.Where("asset_code = ?", assetCode)
+		}
+		if err := q.Order("expires_at asc, created_at asc").Find(&items).Error; err != nil {
+			log.Error("wallet.bucket.expire.lookup_failed", "error", err)
+			return err
+		}
+		if len(items) == 0 {
+			log.Info("wallet.bucket.expire.noop")
+			return nil
+		}
 		for i := range items {
 			item := &items[i]
 			if item.Balance <= 0 {
@@ -651,14 +659,15 @@ func (s *Service) ExpireWalletBuckets(assetCode string, now time.Time) ([]models
 				return err
 			}
 		}
+		expired = items
 		return nil
 	})
 	if err != nil {
-		log.Error("wallet.bucket.expire.failed", "error", err, "candidate_count", len(items))
+		log.Error("wallet.bucket.expire.failed", "error", err)
 		return nil, err
 	}
-	log.Info("wallet.bucket.expire.success", "expired_bucket_count", len(items))
-	return items, err
+	log.Info("wallet.bucket.expire.success", "expired_bucket_count", len(expired))
+	return expired, err
 }
 
 func (s *Service) RunLifecycleOnce(now time.Time) (*LifecycleRunResult, error) {
@@ -805,7 +814,10 @@ func (s *Service) DebitByPriorityTx(tx *gorm.DB, subjectType, subjectID, product
 
 func (s *Service) findOrCreateWalletAccountTx(tx *gorm.DB, subjectType, subjectID, assetCode, assetType string) (*models.WalletAccount, error) {
 	var account models.WalletAccount
-	if err := tx.Where("billing_subject_type = ? AND billing_subject_id = ? AND asset_code = ?", subjectType, subjectID, assetCode).First(&account).Error; err != nil {
+	// NOTE: 使用 FOR UPDATE 行级锁，防止并发事务读到相同余额导致丢失更新
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("billing_subject_type = ? AND billing_subject_id = ? AND asset_code = ?", subjectType, subjectID, assetCode).
+		First(&account).Error; err != nil {
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
 		}
@@ -874,15 +886,18 @@ func (s *Service) creditAccountTx(tx *gorm.DB, account *models.WalletAccount, am
 		}
 	}
 	if bucket.LifecycleType == platformconst.WalletLifecycleCycleReset && bucket.CycleKey != "" {
-		if existing, err := s.repo.FindWalletBucketByCycle(account.ID, bucket.CycleKey); err == nil {
+		// NOTE: cycle bucket 查询必须使用 tx 保持事务一致性
+		var existingBucket models.WalletBucket
+		cycleFindErr := tx.Where("wallet_account_id = ? AND cycle_key = ?", account.ID, bucket.CycleKey).Order("created_at desc").First(&existingBucket).Error
+		if existing := &existingBucket; cycleFindErr == nil {
 			existing.Balance += amount
 			existing.UpdatedAt = now
 			if err := tx.Save(existing).Error; err != nil {
 				return nil, err
 			}
 			bucket = existing
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
+		} else if !errors.Is(cycleFindErr, gorm.ErrRecordNotFound) {
+			return nil, cycleFindErr
 		} else if err := tx.Create(bucket).Error; err != nil {
 			return nil, err
 		}
@@ -923,12 +938,21 @@ func (s *Service) debitAccountTx(tx *gorm.DB, account *models.WalletAccount, amo
 		return nil, ErrInsufficientWalletBalance
 	}
 	now := time.Now()
-	buckets, err := s.repo.ListSpendableWalletBuckets(account.ID, now)
-	if err != nil {
+	// NOTE: bucket 查询必须使用事务内的 tx 而非 s.repo，
+	// 否则并发事务可读到相同余额导致双花。
+	var buckets []models.WalletBucket
+	if err := tx.
+		Where("wallet_account_id = ? AND status = ? AND balance > 0", account.ID, platformconst.StatusActive).
+		Where("expires_at IS NULL OR expires_at > ?", now).
+		Order("CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END, expires_at asc, created_at asc").
+		Find(&buckets).Error; err != nil {
 		return nil, err
 	}
-	allBuckets, err := s.repo.ListWalletBuckets(account.ID, "")
-	if err != nil {
+	var allBuckets []models.WalletBucket
+	if err := tx.
+		Where("wallet_account_id = ?", account.ID).
+		Order("expires_at asc, created_at asc").
+		Find(&allBuckets).Error; err != nil {
 		return nil, err
 	}
 	asset, err := s.resolveAssetDefinitionTx(tx, account.AssetCode)
@@ -1009,8 +1033,10 @@ func (s *Service) debitAccountTx(tx *gorm.DB, account *models.WalletAccount, amo
 
 func (s *Service) grantCycleBucketTx(tx *gorm.DB, account *models.WalletAccount, cycleKey string, amount int64, metadata string) (*models.WalletBucket, error) {
 	now := time.Now()
-	if existing, err := s.repo.FindWalletBucketByCycle(account.ID, cycleKey); err == nil {
-		return existing, nil
+	// NOTE: cycle bucket 查询必须使用 tx 保持事务一致性
+	var existingBucket models.WalletBucket
+	if err := tx.Where("wallet_account_id = ? AND cycle_key = ?", account.ID, cycleKey).Order("created_at desc").First(&existingBucket).Error; err == nil {
+		return &existingBucket, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}

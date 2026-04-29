@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -27,6 +28,10 @@ func JWTAuth(identityService *identity.Service, jwtSecret string) gin.HandlerFun
 			return
 		}
 		token, err := jwt.Parse(parts[1], func(token *jwt.Token) (any, error) {
+			// 校验签名算法，防止算法混淆攻击
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
 			return []byte(jwtSecret), nil
 		})
 		if err != nil || !token.Valid {
