@@ -155,26 +155,28 @@ func InitRedis(cfg config.RedisConfig) (*redis.Client, error) {
 }
 
 func preAutoMigrate(db *gorm.DB) error {
-	if !db.Migrator().HasTable(&models.AuditLog{}) {
-	} else {
-		// Legacy audit_logs rows may exist before the structured target_type field was introduced.
-		// Add and backfill it safely first, otherwise PostgreSQL rejects ADD COLUMN ... NOT NULL.
-		if !db.Migrator().HasColumn(&models.AuditLog{}, "target_type") {
-			if err := db.Exec(`ALTER TABLE audit_logs ADD COLUMN target_type text`).Error; err != nil {
-				return err
-			}
-			if err := db.Exec(`UPDATE audit_logs SET target_type = 'legacy_audit' WHERE target_type IS NULL OR target_type = ''`).Error; err != nil {
-				return err
-			}
-			if err := db.Exec(`ALTER TABLE audit_logs ALTER COLUMN target_type SET NOT NULL`).Error; err != nil {
-				return err
-			}
-		}
+	if err := EnsurePlatformAuditTableIsolation(db); err != nil {
+		return err
 	}
 	if err := widenIncentiveCodeColumns(db); err != nil {
 		return err
 	}
 	return nil
+}
+
+func EnsurePlatformAuditTableIsolation(db *gorm.DB) error {
+	migrator := db.Migrator()
+	platformTable := "platform_audit_logs"
+	if migrator.HasTable(platformTable) {
+		return nil
+	}
+	if !migrator.HasTable("audit_logs") {
+		return nil
+	}
+	if !migrator.HasColumn("audit_logs", "target_type") {
+		return nil
+	}
+	return db.Exec(`ALTER TABLE audit_logs RENAME TO platform_audit_logs`).Error
 }
 
 func widenIncentiveCodeColumns(db *gorm.DB) error {
@@ -221,10 +223,14 @@ func autoMigrate(db *gorm.DB) error {
 		&models.StorageAsset{},
 		&models.RuntimeJob{},
 		&models.RuntimeAttempt{},
+		&models.RuntimeCallbackDelivery{},
 		&models.ChargeSession{},
 		&models.MeterEvent{},
 		&models.UsageRecord{},
 		&models.UsageAgg{},
+		&models.QuotaGrantPolicy{},
+		&models.PackageCapabilityPolicy{},
+		&models.CapabilityGrant{},
 		&models.QuotaLedger{},
 		&models.CreditsLedger{},
 		&models.BillingLedger{},

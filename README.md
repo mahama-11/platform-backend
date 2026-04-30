@@ -20,6 +20,7 @@
 - 身份、组织、权限、平台商业化、runtime、wallet、template ops、asset storage 等核心模块均已接入统一响应、审计、追踪、指标和结构化日志基线。
 - 平台商业化真相已收敛到 wallet / metering / settlement / discount / incentive 几条主链路，产品侧通过 internal API 消费平台主控能力。
 - runtime 已支持 provider routing、fallback、异步 polling / callback、结果归档到平台 storage，并回调产品后端完成最终业务落账。
+- 平台审计表现已独立落到 `platform_audit_logs`，不再与历史业务侧共用 `audit_logs`，避免跨服务 `AutoMigrate` 互相污染共享库表结构。
 - 当前轮新增的代码质量与安全加固包括：
   - 非 debug 模式默认密钥拦截
   - JWT 签名算法校验

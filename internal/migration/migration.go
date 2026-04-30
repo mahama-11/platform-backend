@@ -128,6 +128,16 @@ func Steps() []Step {
 				return db.AutoMigrate(&models.QuotaGrantPolicy{}, &models.PackageCapabilityPolicy{})
 			},
 		},
+		{
+			Version: 202604290001,
+			Name:    "split_platform_audit_logs",
+			Up: func(db *gorm.DB) error {
+				if err := storage.EnsurePlatformAuditTableIsolation(db); err != nil {
+					return err
+				}
+				return db.AutoMigrate(&models.AuditLog{})
+			},
+		},
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Version < steps[j].Version })
 	return steps

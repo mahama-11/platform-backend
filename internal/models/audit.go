@@ -22,3 +22,7 @@ type AuditLog struct {
 	DiffSummary        string    `gorm:"type:text" json:"diff_summary"`
 	CreatedAt          time.Time `json:"created_at"`
 }
+
+func (AuditLog) TableName() string {
+	return "platform_audit_logs"
+}

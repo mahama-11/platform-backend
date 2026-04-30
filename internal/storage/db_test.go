@@ -7,6 +7,10 @@ import (
 	"time"
 
 	"platform-service/internal/config"
+	"platform-service/internal/models"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 )
 
 func TestValidateAutoMigratePolicy(t *testing.T) {
@@ -131,6 +135,11 @@ func TestRunSchemaBootstrapAndInitDBSQLite(t *testing.T) {
 	if err := widenIncentiveCodeColumns(db); err != nil {
 		t.Fatalf("widenIncentiveCodeColumns sqlite: %v", err)
 	}
+	for _, table := range []string{"quota_grant_policies", "package_capability_policies", "capability_grants", "runtime_callback_deliveries"} {
+		if !db.Migrator().HasTable(table) {
+			t.Fatalf("expected %s to be created during schema bootstrap", table)
+		}
+	}
 }
 
 func TestInitRedisEnabledFailure(t *testing.T) {
@@ -147,5 +156,36 @@ func TestInitRedisEnabledFailure(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("expected redis ping failure")
+	}
+}
+
+func TestEnsurePlatformAuditTableIsolationRenamesLegacyAuditTable(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.Exec(`
+		CREATE TABLE audit_logs (
+			id TEXT PRIMARY KEY,
+			request_id TEXT,
+			action TEXT NOT NULL,
+			target_type TEXT NOT NULL,
+			status TEXT NOT NULL,
+			details TEXT
+		)
+	`).Error; err != nil {
+		t.Fatalf("create legacy platform audit table: %v", err)
+	}
+	if err := EnsurePlatformAuditTableIsolation(db); err != nil {
+		t.Fatalf("EnsurePlatformAuditTableIsolation: %v", err)
+	}
+	if db.Migrator().HasTable("audit_logs") {
+		t.Fatalf("expected legacy audit_logs table to be renamed away")
+	}
+	if !db.Migrator().HasTable("platform_audit_logs") {
+		t.Fatalf("expected platform_audit_logs to exist")
+	}
+	if err := db.AutoMigrate(&models.AuditLog{}); err != nil {
+		t.Fatalf("auto migrate platform audit table: %v", err)
 	}
 }
