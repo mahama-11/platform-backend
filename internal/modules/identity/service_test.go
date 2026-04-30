@@ -78,3 +78,26 @@ func TestIdentityServiceRegisterLoginAndProfileFlow(t *testing.T) {
 		t.Fatalf("UpdateProfile: %+v err=%v", updated, err)
 	}
 }
+
+func TestIdentityServiceLoginWithInvalidStoredPasswordReturnsInvalidCredentials(t *testing.T) {
+	service, repo := newIdentityTestService(t)
+	user := models.User{
+		ID:              "legacy-user",
+		Email:           "legacy@example.com",
+		Password:        "",
+		Name:            "Legacy",
+		FullName:        "Legacy User",
+		Role:            "user",
+		OrgID:           "org-legacy",
+		OrgRole:         "owner",
+		CurrentOrgID:    "org-legacy",
+		LastActiveOrgID: "org-legacy",
+		Status:          "active",
+	}
+	if err := repo.DB().Create(&user).Error; err != nil {
+		t.Fatalf("seed legacy user: %v", err)
+	}
+	if _, err := service.Login(LoginInput{Email: "legacy@example.com", Password: "secret123"}); err != ErrInvalidCredentials {
+		t.Fatalf("expected ErrInvalidCredentials, got %v", err)
+	}
+}

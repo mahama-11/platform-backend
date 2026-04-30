@@ -210,7 +210,10 @@ func (s *Service) Login(input LoginInput) (*AuthResult, error) {
 		}
 		return nil, err
 	}
-	if user.Status != "active" || bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(input.Password)) != nil {
+	if user.Status != "active" {
+		return nil, ErrInvalidCredentials
+	}
+	if err := verifyPassword(user.Password, input.Password); err != nil {
 		return nil, ErrInvalidCredentials
 	}
 	if user.CurrentOrgID == "" {
@@ -241,6 +244,14 @@ func (s *Service) Login(input LoginInput) (*AuthResult, error) {
 		return nil, err
 	}
 	return &AuthResult{AccessToken: token, User: *profile}, nil
+}
+
+func verifyPassword(storedHash, plainPassword string) error {
+
+	if err := bcrypt.CompareHashAndPassword([]byte(storedHash), []byte(plainPassword)); err != nil {
+		return ErrInvalidCredentials
+	}
+	return nil
 }
 
 func (s *Service) Me(userID string) (*UserProfile, error) {
