@@ -47,12 +47,12 @@ func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code": 0,
 				"data": map[string]any{
-					"template_id":    "menu-tpl-1",
-					"slug":           "winter-dish",
-					"name":           "Winter Dish",
-					"description":    "menu detail",
-					"platforms":      []string{"xiaohongshu"},
-					"tags":           []string{"winter"},
+					"template_id":     "menu-tpl-1",
+					"slug":            "winter-dish",
+					"name":            "Winter Dish",
+					"description":     "menu detail",
+					"platforms":       []string{"xiaohongshu"},
+					"tags":            []string{"winter"},
 					"recommend_score": 91,
 				},
 			})
@@ -64,7 +64,7 @@ func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 
 	ecomServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/template-center/catalog":
+		case "/api/v1/ecommerce/template-center/catalog":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code": 0,
 				"data": []map[string]any{
@@ -85,24 +85,18 @@ func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 					},
 				},
 			})
-		case "/api/v1/template-center/catalog/ecom-tpl-1":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"code": 0,
-				"data": map[string]any{
-					"catalog": map[string]any{
-						"id":             "ecom-tpl-1",
-						"slug":           "hero-banner",
-						"name":           "Hero Banner",
-						"summary":        "ecom detail",
-						"modality":       "image",
-						"series":         "banner",
-						"capabilityType": "design",
-						"coverAssetUrl":  "https://cdn.example/banner.png",
-						"platformTags":   []string{"amazon"},
-						"recommendScore": 87,
-					},
-				},
-			})
+		case "/api/v1/ecommerce/template-center/catalog/ecom-tpl-1":
+			// The live Ecommerce seed can list templates before every detail row has a
+			// complete version/schema. Platform sync should still converge the visible
+			// projection from the list payload instead of failing the whole endpoint.
+			response := map[string]any{
+				"code":       1004,
+				"message":    "Resource not found",
+				"error":      "template not found",
+				"error_code": "TEMPLATE_NOT_FOUND",
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(response)
 		default:
 			http.NotFound(w, r)
 		}

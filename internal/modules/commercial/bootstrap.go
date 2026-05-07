@@ -2,6 +2,7 @@ package commercial
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"platform-service/internal/config"
@@ -39,6 +40,13 @@ func SeedLocalDefaults(db *gorm.DB, cfg *config.Config) error {
 	for _, item := range cfg.Bootstrap.Commercial.BillableItems {
 		if _, err := ensureCreditsBillableItem(repo, item); err != nil {
 			return err
+		}
+	}
+	for _, productCode := range cfg.Bootstrap.Commercial.VisibleBaselines {
+		if strings.EqualFold(strings.TrimSpace(productCode), EcommerceVisibleBaselineCode) && strings.EqualFold(cfg.GinMode, "debug") {
+			if err := SeedEcommerceVisibleBaseline(db); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

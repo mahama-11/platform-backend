@@ -172,24 +172,24 @@ type CSVImportPreviewAssetCheck struct {
 }
 
 type CSVImportPreviewRow struct {
-	Row          int                          `json:"row"`
-	TemplateRef  string                       `json:"template_ref"`
-	Action       string                       `json:"action"`
-	Valid        bool                         `json:"valid"`
-	ReadyToImport bool                        `json:"ready_to_import"`
-	Error        string                       `json:"error,omitempty"`
-	AssetChecks  []CSVImportPreviewAssetCheck `json:"asset_checks,omitempty"`
+	Row           int                          `json:"row"`
+	TemplateRef   string                       `json:"template_ref"`
+	Action        string                       `json:"action"`
+	Valid         bool                         `json:"valid"`
+	ReadyToImport bool                         `json:"ready_to_import"`
+	Error         string                       `json:"error,omitempty"`
+	AssetChecks   []CSVImportPreviewAssetCheck `json:"asset_checks,omitempty"`
 }
 
 type CSVImportPreviewSummary struct {
-	TotalRows         int `json:"total_rows"`
-	ValidRows         int `json:"valid_rows"`
-	InvalidRows       int `json:"invalid_rows"`
-	CreateCount       int `json:"create_count"`
-	UpdateCount       int `json:"update_count"`
+	TotalRows          int `json:"total_rows"`
+	ValidRows          int `json:"valid_rows"`
+	InvalidRows        int `json:"invalid_rows"`
+	CreateCount        int `json:"create_count"`
+	UpdateCount        int `json:"update_count"`
 	ReadyToImportCount int `json:"ready_to_import_count"`
-	MissingAssetRows  int `json:"missing_asset_rows"`
-	MissingAssetCount int `json:"missing_asset_count"`
+	MissingAssetRows   int `json:"missing_asset_rows"`
+	MissingAssetCount  int `json:"missing_asset_count"`
 }
 
 type CSVImportPreviewResult struct {
@@ -204,15 +204,15 @@ type CSVImportResult struct {
 }
 
 type PreparedRealImportBundle struct {
-	Content            string `json:"content"`
-	CSVPath            string `json:"csv_path"`
-	AssetManifestPath  string `json:"asset_manifest_path"`
-	SummaryPath        string `json:"summary_path"`
-	TemplateCount      int    `json:"template_count"`
-	MenuTemplateCount  int    `json:"menu_template_count"`
-	EcommerceTemplateCount int `json:"ecommerce_template_count"`
-	AssetManifestItemCount int `json:"asset_manifest_item_count"`
-	MissingAssetCount  int    `json:"missing_asset_count"`
+	Content                string `json:"content"`
+	CSVPath                string `json:"csv_path"`
+	AssetManifestPath      string `json:"asset_manifest_path"`
+	SummaryPath            string `json:"summary_path"`
+	TemplateCount          int    `json:"template_count"`
+	MenuTemplateCount      int    `json:"menu_template_count"`
+	EcommerceTemplateCount int    `json:"ecommerce_template_count"`
+	AssetManifestItemCount int    `json:"asset_manifest_item_count"`
+	MissingAssetCount      int    `json:"missing_asset_count"`
 }
 
 type PreparedAssetManifestItem struct {
@@ -475,7 +475,7 @@ func (s *Service) listEcommerceCatalog(ctx context.Context, input ListCatalogInp
 	if q := strings.TrimSpace(input.Query); q != "" {
 		values.Set("keyword", q)
 	}
-	body, err := s.fetchJSON(ctx, source.BaseURL+"/api/v1/template-center/catalog?"+values.Encode())
+	body, err := s.fetchJSON(ctx, source.BaseURL+"/api/v1/ecommerce/template-center/catalog?"+values.Encode())
 	if err != nil {
 		return nil, err
 	}
@@ -493,7 +493,7 @@ func (s *Service) listEcommerceCatalog(ctx context.Context, input ListCatalogInp
 		IndustryTags   []string `json:"industryTags"`
 		ScenarioTags   []string `json:"scenarioTags"`
 		RecommendScore int      `json:"recommendScore"`
-	} 
+	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
@@ -535,13 +535,13 @@ func (s *Service) getMenuDetail(ctx context.Context, productCode, templateID str
 		return nil, err
 	}
 	item := TemplateCatalogItem{
-		TemplateRef: buildTemplateRef(productCode, templateID),
-		ProductCode: productCode,
-		TemplateID:  templateID,
-		Name:        stringValue(payload["name"]),
-		Slug:        stringValue(payload["slug"]),
-		Summary:     stringValue(payload["description"]),
-		Status:      "published",
+		TemplateRef:  buildTemplateRef(productCode, templateID),
+		ProductCode:  productCode,
+		TemplateID:   templateID,
+		Name:         stringValue(payload["name"]),
+		Slug:         stringValue(payload["slug"]),
+		Summary:      stringValue(payload["description"]),
+		Status:       "published",
 		CoverAssetID: stringValue(payload["cover_asset_id"]),
 	}
 	item.Platforms = toStringSlice(payload["platforms"])
@@ -559,7 +559,7 @@ func (s *Service) getEcommerceDetail(ctx context.Context, productCode, templateI
 	source := s.sources[productCode]
 	values := url.Values{}
 	values.Set("locale", defaultLocale(locale))
-	body, err := s.fetchJSON(ctx, fmt.Sprintf("%s/api/v1/template-center/catalog/%s?%s", source.BaseURL, url.PathEscape(templateID), values.Encode()))
+	body, err := s.fetchJSON(ctx, fmt.Sprintf("%s/api/v1/ecommerce/template-center/catalog/%s?%s", source.BaseURL, url.PathEscape(templateID), values.Encode()))
 	if err != nil {
 		return nil, err
 	}
@@ -613,9 +613,15 @@ func (s *Service) SyncFromUpstream(ctx context.Context, productCode string, loca
 			return nil, err
 		}
 		for _, item := range items {
-			detail, err := s.fetchUpstreamDetail(ctx, item.TemplateRef, locale)
-			if err != nil {
-				return nil, err
+			detailRaw := map[string]any{
+				"catalog": item.Raw,
+				"source":  "catalog_list_fallback",
+			}
+			if detail, err := s.fetchUpstreamDetail(ctx, item.TemplateRef, locale); err == nil && detail != nil && detail.DetailRaw != nil {
+				detailRaw = detail.DetailRaw
+			} else if err != nil {
+				detailRaw["detail_sync_status"] = "unavailable"
+				detailRaw["detail_sync_error"] = err.Error()
 			}
 			record := projectionFromUpsert(UpsertTemplateInput{
 				ProductCode:    item.ProductCode,
@@ -635,7 +641,7 @@ func (s *Service) SyncFromUpstream(ctx context.Context, productCode string, loca
 				CapabilityType: item.CapabilityType,
 				Modality:       item.Modality,
 				Raw:            item.Raw,
-				DetailRaw:      detail.DetailRaw,
+				DetailRaw:      detailRaw,
 			})
 			now := time.Now()
 			record.LastSyncedAt = now
@@ -658,27 +664,27 @@ func (s *Service) SyncFromUpstream(ctx context.Context, productCode string, loca
 					record.PublishedAt = &now
 				}
 				if err := s.db.WithContext(ctx).Model(&models.TemplateProjection{}).Where("template_ref = ?", record.TemplateRef).Updates(map[string]any{
-					"product_code":     record.ProductCode,
-					"template_id":      record.TemplateID,
-					"slug":             record.Slug,
-					"name":             record.Name,
-					"summary":          record.Summary,
-					"status":           record.Status,
-					"scope":            record.Scope,
-					"managed_source":   record.ManagedSource,
-					"cover_asset_id":   record.CoverAssetID,
-					"cover_asset_url":  record.CoverAssetURL,
-					"recommend_score":  record.RecommendScore,
-					"platforms_json":   record.PlatformsJSON,
-					"tags_json":        record.TagsJSON,
-					"series":           record.Series,
-					"capability_type":  record.CapabilityType,
-					"modality":         record.Modality,
-					"raw_json":         record.RawJSON,
-					"detail_json":      record.DetailJSON,
-					"last_synced_at":   record.LastSyncedAt,
+					"product_code":      record.ProductCode,
+					"template_id":       record.TemplateID,
+					"slug":              record.Slug,
+					"name":              record.Name,
+					"summary":           record.Summary,
+					"status":            record.Status,
+					"scope":             record.Scope,
+					"managed_source":    record.ManagedSource,
+					"cover_asset_id":    record.CoverAssetID,
+					"cover_asset_url":   record.CoverAssetURL,
+					"recommend_score":   record.RecommendScore,
+					"platforms_json":    record.PlatformsJSON,
+					"tags_json":         record.TagsJSON,
+					"series":            record.Series,
+					"capability_type":   record.CapabilityType,
+					"modality":          record.Modality,
+					"raw_json":          record.RawJSON,
+					"detail_json":       record.DetailJSON,
+					"last_synced_at":    record.LastSyncedAt,
 					"source_updated_at": record.SourceUpdatedAt,
-					"updated_at":       now,
+					"updated_at":        now,
 				}).Error; err != nil {
 					return nil, err
 				}
@@ -1413,25 +1419,25 @@ func projectionFromUpsert(input UpsertTemplateInput) models.TemplateProjection {
 	productCode := strings.TrimSpace(input.ProductCode)
 	templateID := strings.TrimSpace(input.TemplateID)
 	return models.TemplateProjection{
-		TemplateRef:     buildTemplateRef(productCode, templateID),
-		ProductCode:     productCode,
-		TemplateID:      templateID,
-		Slug:            strings.TrimSpace(input.Slug),
-		Name:            strings.TrimSpace(input.Name),
-		Summary:         strings.TrimSpace(input.Summary),
-		Status:          firstNonEmpty(strings.TrimSpace(input.Status), "active"),
-		Scope:           firstNonEmpty(strings.TrimSpace(input.Scope), "official"),
-		ManagedSource:   firstNonEmpty(strings.TrimSpace(input.ManagedSource), "ops_manual"),
-		CoverAssetID:    strings.TrimSpace(input.CoverAssetID),
-		CoverAssetURL:   strings.TrimSpace(input.CoverAssetURL),
-		RecommendScore:  input.RecommendScore,
-		PlatformsJSON:   string(mustJSONSlice(input.Platforms)),
-		TagsJSON:        string(mustJSONSlice(input.Tags)),
-		Series:          strings.TrimSpace(input.Series),
-		CapabilityType:  strings.TrimSpace(input.CapabilityType),
-		Modality:        strings.TrimSpace(input.Modality),
-		RawJSON:         string(rawJSON),
-		DetailJSON:      string(detailJSON),
+		TemplateRef:    buildTemplateRef(productCode, templateID),
+		ProductCode:    productCode,
+		TemplateID:     templateID,
+		Slug:           strings.TrimSpace(input.Slug),
+		Name:           strings.TrimSpace(input.Name),
+		Summary:        strings.TrimSpace(input.Summary),
+		Status:         firstNonEmpty(strings.TrimSpace(input.Status), "active"),
+		Scope:          firstNonEmpty(strings.TrimSpace(input.Scope), "official"),
+		ManagedSource:  firstNonEmpty(strings.TrimSpace(input.ManagedSource), "ops_manual"),
+		CoverAssetID:   strings.TrimSpace(input.CoverAssetID),
+		CoverAssetURL:  strings.TrimSpace(input.CoverAssetURL),
+		RecommendScore: input.RecommendScore,
+		PlatformsJSON:  string(mustJSONSlice(input.Platforms)),
+		TagsJSON:       string(mustJSONSlice(input.Tags)),
+		Series:         strings.TrimSpace(input.Series),
+		CapabilityType: strings.TrimSpace(input.CapabilityType),
+		Modality:       strings.TrimSpace(input.Modality),
+		RawJSON:        string(rawJSON),
+		DetailJSON:     string(detailJSON),
 	}
 }
 

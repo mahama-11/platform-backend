@@ -51,3 +51,36 @@ func TestSeedLocalDefaultsCreatesCommercialDefaults(t *testing.T) {
 		t.Fatalf("unexpected bootstrap counts: products=%d entities=%d profiles=%d billableItems=%d", products, entities, profiles, billableItems)
 	}
 }
+
+func TestSeedEcommerceVisibleBaselineIdempotent(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Product{}, &models.SKU{}, &models.CommercialPackage{}, &models.BillableItem{}, &models.RateCard{}, &models.AssetDefinition{}, &models.QuotaGrantPolicy{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	cfg := &config.Config{
+		GinMode: "debug",
+		Bootstrap: config.BootstrapConfig{Commercial: config.CommercialBootstrapConfig{
+			VisibleBaselines: []string{"ecommerce"},
+		}},
+	}
+	if err := SeedLocalDefaults(db, cfg); err != nil {
+		t.Fatalf("SeedLocalDefaults first run: %v", err)
+	}
+	if err := SeedLocalDefaults(db, cfg); err != nil {
+		t.Fatalf("SeedLocalDefaults second run: %v", err)
+	}
+	var products, skus, packages, billableItems, rateCards, assets, quotaPolicies int64
+	_ = db.Model(&models.Product{}).Where("code = ?", "ecommerce").Count(&products).Error
+	_ = db.Model(&models.SKU{}).Where("product_id <> ''").Count(&skus).Error
+	_ = db.Model(&models.CommercialPackage{}).Where("product_id <> ''").Count(&packages).Error
+	_ = db.Model(&models.BillableItem{}).Where("code LIKE ?", "ecommerce.%").Count(&billableItems).Error
+	_ = db.Model(&models.RateCard{}).Where("code LIKE ?", "ecommerce.%").Count(&rateCards).Error
+	_ = db.Model(&models.AssetDefinition{}).Where("product_code = ?", "ecommerce").Count(&assets).Error
+	_ = db.Model(&models.QuotaGrantPolicy{}).Where("product_code = ?", "ecommerce").Count(&quotaPolicies).Error
+	if products != 1 || skus != 5 || packages != 5 || billableItems != 1 || rateCards != 6 || assets != 4 || quotaPolicies != 5 {
+		t.Fatalf("unexpected visible baseline counts: products=%d skus=%d packages=%d billableItems=%d rateCards=%d assets=%d quotaPolicies=%d", products, skus, packages, billableItems, rateCards, assets, quotaPolicies)
+	}
+}

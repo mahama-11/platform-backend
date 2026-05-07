@@ -135,3 +135,36 @@ func TestSeedMenuOfferings(t *testing.T) {
 		t.Fatalf("capability policy count = %d, want 3", capabilityPolicyCount)
 	}
 }
+
+func TestSeedEcommerceOfferingsVisibleBaseline(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := Up(db); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if err := seedEcommerceOfferings(db); err != nil {
+		t.Fatalf("seedEcommerceOfferings idempotent rerun: %v", err)
+	}
+	var product models.Product
+	if err := db.Where("code = ?", "ecommerce").First(&product).Error; err != nil {
+		t.Fatalf("load ecommerce product: %v", err)
+	}
+	assertCountAtLeast := func(name string, model any, where string, args []any, want int64) {
+		t.Helper()
+		var count int64
+		if err := db.Model(model).Where(where, args...).Count(&count).Error; err != nil {
+			t.Fatalf("count %s: %v", name, err)
+		}
+		if count < want {
+			t.Fatalf("%s count = %d, want >= %d", name, count, want)
+		}
+	}
+	assertCountAtLeast("ecommerce skus", &models.SKU{}, "product_id = ?", []any{product.ID}, 5)
+	assertCountAtLeast("ecommerce packages", &models.CommercialPackage{}, "product_id = ?", []any{product.ID}, 5)
+	assertCountAtLeast("ecommerce billable items", &models.BillableItem{}, "product_id = ?", []any{product.ID}, 1)
+	assertCountAtLeast("ecommerce rate cards", &models.RateCard{}, "product_id = ?", []any{product.ID}, 6)
+	assertCountAtLeast("ecommerce asset definitions", &models.AssetDefinition{}, "product_code = ?", []any{"ecommerce"}, 4)
+	assertCountAtLeast("ecommerce quota policies", &models.QuotaGrantPolicy{}, "product_code = ?", []any{"ecommerce"}, 5)
+}
