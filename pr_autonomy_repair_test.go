@@ -1,3 +1,3 @@
 package main
 
-func prAutonomyRepairMarker( ) string { return "PR_AUTONOMY_REPAIR_FAIL" }
+func prAutonomyRepairMarker() string { return "PR_AUTONOMY_REPAIR_FAIL" }
