@@ -43,11 +43,18 @@ jobs:
             base="HEAD~1"
           fi
           changed=$(git diff --name-only "$base"...HEAD -- '*.go' ':!vendor/*' || true)
-          if [ -z "$changed" ]; then
-            echo "No changed Go files."
+          existing=$(printf '%s
+' "$changed" | while IFS= read -r file; do
+            if [ -n "$file" ] && [ -f "$file" ]; then
+              printf '%s
+' "$file"
+            fi
+          done)
+          if [ -z "$existing" ]; then
+            echo "No existing changed Go files."
             exit 0
           fi
-          files=$(gofmt -l $changed)
+          files=$(gofmt -l $existing)
           if [ -n "$files" ]; then
             echo "gofmt required:"
             echo "$files"
