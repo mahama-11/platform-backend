@@ -42,9 +42,9 @@ jobs:
           else
             base="HEAD~1"
           fi
-          changed=$(git diff --name-only "$base"...HEAD -- '*.go' ':!vendor/*' || true)
+          changed=$(git diff --name-only --diff-filter=ACMRT "$base"...HEAD -- '*.go' ':!vendor/*' || true)
           if [ -z "$changed" ]; then
-            echo "No changed Go files."
+            echo "No existing changed Go files."
             exit 0
           fi
           files=$(gofmt -l $changed)
