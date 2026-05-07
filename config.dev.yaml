@@ -9,6 +9,8 @@ app:
 
 bootstrap:
   commercial:
+    visible_baselines:
+      - "ecommerce"
     products:
       - code: "menu"
         name: "Menu Studio"

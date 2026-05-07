@@ -45,13 +45,30 @@ type RuntimeConfig struct {
 }
 
 type BootstrapConfig struct {
+	Identity   IdentityBootstrapConfig   `mapstructure:"identity"`
 	Commercial CommercialBootstrapConfig `mapstructure:"commercial"`
 	Runtime    RuntimeBootstrapConfig    `mapstructure:"runtime"`
 	Storage    StorageBootstrapConfig    `mapstructure:"storage"`
 }
 
+type IdentityBootstrapConfig struct {
+	DevSeedEnabled      bool                `mapstructure:"dev_seed_enabled"`
+	ForceRotatePassword bool                `mapstructure:"force_rotate_password"`
+	ForceAdminState     bool                `mapstructure:"force_admin_state"`
+	DevAdmins           []BootstrapDevAdmin `mapstructure:"dev_admins"`
+}
+
+type BootstrapDevAdmin struct {
+	Email            string `mapstructure:"email"`
+	Password         string `mapstructure:"password"`
+	PasswordEnv      string `mapstructure:"password_env"`
+	OrganizationName string `mapstructure:"organization_name"`
+	Role             string `mapstructure:"role"`
+}
+
 type CommercialBootstrapConfig struct {
 	Products           []BootstrapProduct          `mapstructure:"products"`
+	VisibleBaselines   []string                    `mapstructure:"visible_baselines"`
 	CommercialEntities []BootstrapCommercialEntity `mapstructure:"commercial_entities"`
 	BillingProfiles    []BootstrapBillingProfile   `mapstructure:"billing_profiles"`
 	BillableItems      []BootstrapBillableItem     `mapstructure:"billable_items"`
@@ -313,6 +330,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log_level", "info")
 	v.SetDefault("use_mock", false)
 	v.SetDefault("app.frontend_base_url", "http://localhost:3000")
+	v.SetDefault("bootstrap.identity.dev_seed_enabled", false)
+	v.SetDefault("bootstrap.identity.force_rotate_password", false)
+	v.SetDefault("bootstrap.identity.force_admin_state", false)
 	v.SetDefault("runtime.worker_enabled", true)
 	v.SetDefault("runtime.worker_concurrency", 8)
 	v.SetDefault("runtime.queue_name", "runtime:default")

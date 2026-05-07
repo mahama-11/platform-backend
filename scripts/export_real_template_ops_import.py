@@ -64,6 +64,27 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def resolve_source_file(workspace_root: Path, candidates: list[str]) -> Path:
+    """Resolve a source fixture under the workspace.
+
+    The workspace has used both current product directory names
+    (menu-backend/ecommerce-backend) and legacy names
+    (v-menu-backend/v-ecommerce-backend).  Preserve compatibility by trying
+    explicit relative candidates in order and failing with the full search list.
+    """
+    attempted: list[Path] = []
+    for candidate in candidates:
+        path = Path(candidate)
+        if not path.is_absolute():
+            path = workspace_root / path
+        path = path.resolve()
+        attempted.append(path)
+        if path.exists():
+            return path
+    attempted_text = "\n".join(f"  - {path}" for path in attempted)
+    raise FileNotFoundError(f"source file not found; tried:\n{attempted_text}")
+
+
 def json_text(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
@@ -109,7 +130,13 @@ def tool_slug_from_slug_and_code(slug: str, external_code: str) -> str:
 
 
 def build_menu_rows(workspace_root: Path) -> list[dict[str, str]]:
-    seed_path = workspace_root / "v-menu-backend/internal/modules/templatecenter/template_library.seed.json"
+    seed_path = resolve_source_file(
+        workspace_root,
+        [
+            "menu-backend/internal/modules/templatecenter/template_library.seed.json",
+            "v-menu-backend/internal/modules/templatecenter/template_library.seed.json",
+        ],
+    )
     library = read_json(seed_path)
     templates = library.get("templates", [])
     rows: list[dict[str, str]] = []
@@ -154,8 +181,20 @@ def build_menu_rows(workspace_root: Path) -> list[dict[str, str]]:
 
 
 def build_ecommerce_rows_and_manifest(workspace_root: Path) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    definitions_path = workspace_root / "v-ecommerce-backend/internal/modules/templatecenter/generated_seed_definitions.json"
-    manifest_path = workspace_root / "v-ecommerce-backend/internal/modules/templatecenter/example_asset_manifest.json"
+    definitions_path = resolve_source_file(
+        workspace_root,
+        [
+            "ecommerce-backend/internal/modules/templatecenter/generated_seed_definitions.json",
+            "v-ecommerce-backend/internal/modules/templatecenter/generated_seed_definitions.json",
+        ],
+    )
+    manifest_path = resolve_source_file(
+        workspace_root,
+        [
+            "ecommerce-backend/internal/modules/templatecenter/example_asset_manifest.json",
+            "v-ecommerce-backend/internal/modules/templatecenter/example_asset_manifest.json",
+        ],
+    )
     definitions = read_json(definitions_path)
     existing_manifest = read_json(manifest_path)
 

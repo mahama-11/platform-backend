@@ -14,6 +14,7 @@ import (
 	access "platform-service/internal/modules/access"
 	assetstorage "platform-service/internal/modules/assetstorage"
 	commercial "platform-service/internal/modules/commercial"
+	devseed "platform-service/internal/modules/devseed"
 	runtime "platform-service/internal/modules/runtime"
 
 	"github.com/go-redis/redis/v8"
@@ -47,6 +48,9 @@ func InitDB(appCfg *config.Config) (*gorm.DB, error) {
 		}
 		if err := assetstorage.SeedLocalDefaults(db, appCfg); err != nil {
 			return nil, fmt.Errorf("seed storage defaults: %w", err)
+		}
+		if err := devseed.SeedLocalDefaults(db, appCfg); err != nil {
+			return nil, fmt.Errorf("seed dev identity defaults: %w", err)
 		}
 	}
 	return db, nil

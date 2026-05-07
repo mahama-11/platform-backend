@@ -59,6 +59,46 @@ func TestSeedDefaultsAndAccessContext(t *testing.T) {
 	}
 }
 
+func TestSeedDefaultsRolePermissionSemanticsAndCleanup(t *testing.T) {
+	_, repo := newAccessTestService(t)
+	if err := SeedDefaults(repo.DB()); err != nil {
+		t.Fatalf("SeedDefaults: %v", err)
+	}
+	stale := models.RolePermission{RoleID: "viewer", PermissionID: "billing.read"}
+	if err := repo.DB().FirstOrCreate(&stale, stale).Error; err != nil {
+		t.Fatalf("create stale permission: %v", err)
+	}
+	if err := SeedDefaults(repo.DB()); err != nil {
+		t.Fatalf("SeedDefaults second run: %v", err)
+	}
+	assertRoleHasPermissions(t, repo.DB(), "owner", []string{"billing.read", "billing.write", "oauth.read", "oauth.write", "logs.read", "platform.admin"}, nil)
+	assertRoleHasPermissions(t, repo.DB(), "admin", []string{"billing.read", "billing.write", "oauth.read", "oauth.write", "logs.read"}, []string{"platform.admin"})
+	assertRoleHasPermissions(t, repo.DB(), "developer", []string{"org.read", "org.switch", "team.read", "org.usage.read"}, []string{"billing.read", "billing.write", "oauth.read", "oauth.write", "platform.admin"})
+	assertRoleHasPermissions(t, repo.DB(), "viewer", []string{"org.read", "org.switch", "team.read"}, []string{"billing.read", "billing.write", "logs.read", "oauth.read", "oauth.write", "platform.admin"})
+}
+
+func assertRoleHasPermissions(t *testing.T, db *gorm.DB, roleID string, expected, forbidden []string) {
+	t.Helper()
+	var rows []models.RolePermission
+	if err := db.Where("role_id = ?", roleID).Find(&rows).Error; err != nil {
+		t.Fatalf("load role permissions for %s: %v", roleID, err)
+	}
+	actual := map[string]bool{}
+	for _, row := range rows {
+		actual[row.PermissionID] = true
+	}
+	for _, permissionID := range expected {
+		if !actual[permissionID] {
+			t.Fatalf("role %s missing expected permission %s; actual=%v", roleID, permissionID, actual)
+		}
+	}
+	for _, permissionID := range forbidden {
+		if actual[permissionID] {
+			t.Fatalf("role %s has forbidden permission %s; actual=%v", roleID, permissionID, actual)
+		}
+	}
+}
+
 func TestHandlerMePermissionsAndInternalMembershipAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service, repo := newAccessTestService(t)
