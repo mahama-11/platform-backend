@@ -11,7 +11,7 @@ import (
 )
 
 func TestProviderRegistryAndManualProvider(t *testing.T) {
-	registry := NewProviderRegistry(config.VolcengineConfig{}, config.ComfyUIBridgeConfig{})
+	registry := NewProviderRegistry(config.VolcengineConfig{}, config.ComfyUIBridgeConfig{}, config.MinimaxConfig{})
 	if _, err := registry.Get("manual"); err != nil {
 		t.Fatalf("expected manual provider to be registered: %v", err)
 	}
@@ -35,7 +35,7 @@ func TestProviderRegistryAndManualProvider(t *testing.T) {
 	if isRetryableProviderError(newNonRetryableProviderError("no-retry")) {
 		t.Fatalf("expected non-retryable provider error")
 	}
-	registry = NewProviderRegistry(config.VolcengineConfig{}, config.ComfyUIBridgeConfig{Enabled: true, BaseURL: "http://127.0.0.1:8000"})
+	registry = NewProviderRegistry(config.VolcengineConfig{}, config.ComfyUIBridgeConfig{Enabled: true, BaseURL: "http://127.0.0.1:8000"}, config.MinimaxConfig{})
 	if _, err := registry.Get("comfyui_bridge"); err != nil {
 		t.Fatalf("expected comfyui_bridge to be registered when enabled: %v", err)
 	}

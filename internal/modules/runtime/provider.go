@@ -51,6 +51,7 @@ type RuntimeInputManifest struct {
 
 type ProviderResultVariant struct {
 	Index      int            `json:"index"`
+	AssetType  string         `json:"asset_type,omitempty"`
 	SourceURL  string         `json:"source_url"`
 	PreviewURL string         `json:"preview_url"`
 	InlineData string         `json:"inline_data,omitempty"`
@@ -177,11 +178,12 @@ type ProviderRegistry struct {
 	providers map[string]GenerationProvider
 }
 
-func NewProviderRegistry(volcengineCfg config.VolcengineConfig, comfyCfg config.ComfyUIBridgeConfig) *ProviderRegistry {
+func NewProviderRegistry(volcengineCfg config.VolcengineConfig, comfyCfg config.ComfyUIBridgeConfig, minimaxCfg config.MinimaxConfig) *ProviderRegistry {
 	registry := &ProviderRegistry{providers: map[string]GenerationProvider{}}
 	registry.Register(newManualProvider("manual"))
 	registry.Register(newManualProvider("mock"))
 	registry.Register(newVolcengineImageProvider("volcengine", volcengineCfg))
+	registry.Register(newMinimaxTextProvider("minimax_text", minimaxCfg))
 	if comfyCfg.Enabled {
 		registry.Register(newComfyUIBridgeProvider("comfyui_bridge", comfyCfg))
 	}

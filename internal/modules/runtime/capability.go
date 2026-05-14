@@ -18,6 +18,10 @@ const (
 	RuntimeTaskImageGeneration    = "image_generation"
 	RuntimeTaskImageInpainting    = "image_inpainting"
 	RuntimeTaskVideoKeyframe      = "video_keyframe"
+	RuntimeTaskTextReasoning      = "text_reasoning"
+	RuntimeTaskIntentPlanning     = "intent_planning"
+	RuntimeTaskPromptPlanning     = "prompt_planning"
+	RuntimeTaskStrategyReport     = "strategy_report"
 
 	RuntimeCapabilityStatusAvailable   = "available"
 	RuntimeCapabilityStatusUnavailable = "unavailable"
@@ -49,6 +53,10 @@ var runtimeTaskContractDefinitions = []runtimeTaskContractDefinition{
 	{TaskType: RuntimeTaskImageGeneration, ContractStatus: RuntimeContractStatusReady},
 	{TaskType: RuntimeTaskImageInpainting, ContractStatus: RuntimeContractStatusNeeded},
 	{TaskType: RuntimeTaskVideoKeyframe, ContractStatus: RuntimeContractStatusNeeded},
+	{TaskType: RuntimeTaskTextReasoning, ContractStatus: RuntimeContractStatusReady},
+	{TaskType: RuntimeTaskIntentPlanning, ContractStatus: RuntimeContractStatusReady},
+	{TaskType: RuntimeTaskPromptPlanning, ContractStatus: RuntimeContractStatusReady},
+	{TaskType: RuntimeTaskStrategyReport, ContractStatus: RuntimeContractStatusNeeded},
 }
 
 type RuntimeCapabilityMatrix struct {
