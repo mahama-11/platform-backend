@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -371,7 +372,7 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 					Category:    outputCategory,
 					FileName:    "",
 					MimeType:    variant.MimeType,
-					Payload:     variant.InlineData,
+					Payload:     runtimeInlineStoragePayload(variant.InlineData, variant.MimeType),
 				})
 				if storeErr != nil {
 					s.runtimeJobLogger(job).
@@ -607,6 +608,18 @@ func (s *Service) hydrateRuntimeSourceAssets(input *RuntimeInputManifest) error 
 		asset.PreviewURL = dataURL
 	}
 	return nil
+}
+
+func runtimeInlineStoragePayload(inlineData, mimeType string) string {
+	trimmed := strings.TrimSpace(inlineData)
+	if trimmed == "" || strings.HasPrefix(trimmed, "data:") {
+		return trimmed
+	}
+	lowerMime := strings.ToLower(strings.TrimSpace(mimeType))
+	if strings.HasPrefix(lowerMime, "text/") || lowerMime == "application/json" || strings.HasSuffix(lowerMime, "+json") {
+		return base64.StdEncoding.EncodeToString([]byte(trimmed))
+	}
+	return trimmed
 }
 
 func decodeJSONMap(raw string) map[string]any {
