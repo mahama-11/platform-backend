@@ -75,7 +75,7 @@ func rankProviderBindings(bindings []models.RuntimeProviderBinding, snapshot Run
 			return leftScore > rightScore
 		}
 		if left.Priority != right.Priority {
-			return left.Priority < right.Priority
+			return left.Priority > right.Priority
 		}
 		return left.ProviderCode < right.ProviderCode
 	})

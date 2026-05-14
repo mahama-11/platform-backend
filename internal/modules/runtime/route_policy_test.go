@@ -35,6 +35,17 @@ func TestRankProviderBindingsPrefersPreferredAndScores(t *testing.T) {
 	}
 }
 
+func TestRankProviderBindingsUsesHigherPriorityForBalancedObjective(t *testing.T) {
+	bindings := []models.RuntimeProviderBinding{
+		{ProviderCode: "minimax_text", Priority: 80},
+		{ProviderCode: "kimi_coding_text", Priority: 120},
+	}
+	ranked := rankProviderBindings(bindings, RuntimeRouteSnapshot{Objective: "balanced"})
+	if ranked[0].ProviderCode != "kimi_coding_text" {
+		t.Fatalf("expected higher-priority Kimi provider first, got %+v", ranked)
+	}
+}
+
 func TestCandidateProviderCodesAndFallbackAllowed(t *testing.T) {
 	bindings := []models.RuntimeProviderBinding{
 		{ProviderCode: "comfyui_bridge"},
