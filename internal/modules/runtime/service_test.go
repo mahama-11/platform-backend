@@ -742,6 +742,41 @@ func TestHandleProviderCallbackPayloadNormalizesOutputManifestAndRegistersStorag
 	}
 }
 
+func TestHandleProviderCallbackPayloadNormalizesTextInlineDataForStorage(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	service.UseAssetStorage(assetstorage.NewService(repo))
+	baseDir := t.TempDir()
+	if err := repo.CreateStorageBinding(&models.StorageBinding{ID: "storage-runtime-text-output", ProductCode: "ecommerce", Category: "runtime-assets", ProviderCode: "local", LocalBaseDir: baseDir, Enabled: true, Priority: 1}); err != nil {
+		t.Fatalf("CreateStorageBinding: %v", err)
+	}
+	job := &models.RuntimeJob{ID: "runtime-callback-text-output", ProductCode: "ecommerce", TaskType: "text_reasoning", ProviderCode: "kimi_coding_text", ProviderMode: "sync", OrganizationID: "org-1", UserID: "user-1", Status: "processing", Stage: "provider_running", SourceType: "regression_smoke", SourceID: "text-1", InputManifest: `{"input_mode":"prompt_snapshot"}`}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	expiresAt := time.Now().Add(time.Minute).Unix()
+	validSig := buildProviderCallbackSignature(runtimeSecurityForTest().EncryptionKey, job.ID, expiresAt)
+	err := service.HandleProviderCallbackPayload("kimi_coding_text", job.ID, expiresAt, validSig, &NormalizedProviderCallbackPayload{
+		Status:       "completed",
+		Progress:     100,
+		StageMessage: "text done",
+		Variants:     []ProviderResultVariant{{Index: 0, InlineData: `{"ok":true}`, MimeType: "application/json", AssetType: "json", Metadata: map[string]any{"provider": "kimi_coding_text"}}},
+		Metadata:     map[string]any{"provider": "kimi_coding_text"},
+	})
+	if err != nil {
+		t.Fatalf("HandleProviderCallbackPayload text inline: %v", err)
+	}
+	updated, err := repo.FindRuntimeJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("FindRuntimeJobByID: %v", err)
+	}
+	if updated.Status != "completed" || updated.OutputManifest == "" {
+		t.Fatalf("expected completed text runtime with output manifest, got %+v", updated)
+	}
+	if _, err := repo.FindStorageAssetBySource("ecommerce", "runtime-assets", "runtime_output", job.ID+":0"); err != nil {
+		t.Fatalf("expected text runtime storage registry asset: %v", err)
+	}
+}
+
 func buildProviderCallbackSignature(secret, runtimeJobID string, expiresAt int64) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(runtimeJobID))
