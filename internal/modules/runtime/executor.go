@@ -399,6 +399,7 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 				variant.MimeType = firstNonEmpty(stored.MimeType, variant.MimeType)
 			}
 		}
+		assetType := firstNonEmpty(variant.AssetType, runtimeAssetTypeForTask(job.TaskType))
 		assetMetadata := sanitizeProviderCallbackMetadata(variant.Metadata)
 		if s.storage != nil && strings.TrimSpace(storageKey) != "" {
 			registered, registerErr := s.storage.RegisterAsset(context.Background(), assetstorage.RegisterAssetInput{
@@ -435,8 +436,8 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 			Status:     "ready",
 			IsSelected: variant.Index == 0,
 			Asset: ProductRecordResultAsset{
-				AssetType:      "generated",
-				SourceType:     "generated",
+				AssetType:      assetType,
+				SourceType:     "runtime_output",
 				FileName:       "",
 				StorageKey:     storageKey,
 				StorageAssetID: storageAssetID,
@@ -454,8 +455,8 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 			Status:     "ready",
 			IsSelected: variant.Index == 0,
 			Asset: RuntimeOutputAssetManifest{
-				AssetType:      "generated",
-				SourceType:     "generated",
+				AssetType:      assetType,
+				SourceType:     "runtime_output",
 				StorageKey:     storageKey,
 				StorageAssetID: storageAssetID,
 				SourceURL:      sourceURL,
@@ -515,6 +516,15 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 		return nil
 	}
 	return nil
+}
+
+func runtimeAssetTypeForTask(taskType string) string {
+	switch taskType {
+	case RuntimeTaskTextReasoning, RuntimeTaskIntentPlanning, RuntimeTaskPromptPlanning, RuntimeTaskStrategyReport:
+		return "text"
+	default:
+		return "generated"
+	}
 }
 
 func (s *Service) outputStorageCategory(job *models.RuntimeJob) string {
