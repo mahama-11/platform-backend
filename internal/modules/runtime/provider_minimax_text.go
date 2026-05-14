@@ -41,7 +41,7 @@ func (p *minimaxTextProvider) Submit(ctx context.Context, req ProviderJobRequest
 		stringMapValue(req.Input.ParamsSnapshot, "model"),
 		req.Input.PromptSnapshot.Model,
 		p.cfg.Model,
-		"MiniMax-M2",
+		"MiniMax-M2.7",
 	)
 	maxTokens := p.cfg.MaxTokens
 	if maxTokens <= 0 {
@@ -112,7 +112,7 @@ func (p *minimaxTextProvider) chatCompletions(ctx context.Context, payload minim
 	if err != nil {
 		return nil, newRetryableProviderError(fmt.Sprintf("minimax request encode failed: %v", err))
 	}
-	endpoint := strings.TrimRight(firstNonEmpty(strings.TrimSpace(p.cfg.BaseURL), "https://api.minimax.chat/v1"), "/") + "/chat/completions"
+	endpoint := strings.TrimRight(firstNonEmpty(strings.TrimSpace(p.cfg.BaseURL), "https://api.minimaxi.com/v1"), "/") + "/chat/completions"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return nil, newRetryableProviderError(fmt.Sprintf("minimax request init failed: %v", err))

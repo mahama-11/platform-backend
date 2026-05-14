@@ -85,22 +85,52 @@ bootstrap:
         metadata: '{"objective_scores":{"quality":85,"speed":50,"cost":45},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
       - product_code: "ecommerce"
         task_type: "text_reasoning"
-        provider_code: "minimax_text"
-        priority: 100
+        provider_code: "kimi_coding_text"
+        priority: 120
         enabled: true
-        metadata: '{"objective_scores":{"quality":82,"speed":70,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+        metadata: '{"objective_scores":{"quality":88,"speed":65,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "text_reasoning"
+        provider_code: "minimax_text"
+        priority: 80
+        enabled: true
+        metadata: '{"objective_scores":{"quality":82,"speed":60,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "intent_planning"
+        provider_code: "kimi_coding_text"
+        priority: 120
+        enabled: true
+        metadata: '{"objective_scores":{"quality":88,"speed":65,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
       - product_code: "ecommerce"
         task_type: "intent_planning"
         provider_code: "minimax_text"
-        priority: 100
+        priority: 80
         enabled: true
-        metadata: '{"objective_scores":{"quality":82,"speed":70,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+        metadata: '{"objective_scores":{"quality":82,"speed":60,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "prompt_planning"
+        provider_code: "kimi_coding_text"
+        priority: 120
+        enabled: true
+        metadata: '{"objective_scores":{"quality":88,"speed":65,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
       - product_code: "ecommerce"
         task_type: "prompt_planning"
         provider_code: "minimax_text"
-        priority: 100
+        priority: 80
         enabled: true
-        metadata: '{"objective_scores":{"quality":82,"speed":70,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+        metadata: '{"objective_scores":{"quality":82,"speed":60,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "strategy_report"
+        provider_code: "kimi_coding_text"
+        priority: 120
+        enabled: true
+        metadata: '{"objective_scores":{"quality":88,"speed":65,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "strategy_report"
+        provider_code: "minimax_text"
+        priority: 80
+        enabled: true
+        metadata: '{"objective_scores":{"quality":82,"speed":60,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
   storage:
     bindings:
       - product_code: "menu"
@@ -201,6 +231,14 @@ minimax:
   model: "MiniMax-M2.7"
   request_timeout: 60s
   max_tokens: 2048
+  temperature: 0.2
+
+kimi_coding:
+  base_url: "https://api.kimi.com/coding"
+  api_key: "change-me-in-config"
+  model: "kimi-k2.6"
+  request_timeout: 90s
+  max_tokens: 4096
   temperature: 0.2
 
 comfyui_bridge:

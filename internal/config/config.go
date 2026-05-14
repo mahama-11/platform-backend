@@ -23,6 +23,7 @@ type Config struct {
 	Volcengine    VolcengineConfig    `mapstructure:"volcengine"`
 	ComfyUIBridge ComfyUIBridgeConfig `mapstructure:"comfyui_bridge"`
 	Minimax       MinimaxConfig       `mapstructure:"minimax"`
+	KimiCoding    KimiCodingConfig    `mapstructure:"kimi_coding"`
 	Security      SecurityConfig      `mapstructure:"security"`
 	OAuth         OAuthConfig         `mapstructure:"oauth"`
 	Monitoring    MonitoringConfig    `mapstructure:"monitoring"`
@@ -176,6 +177,15 @@ type ComfyUIBridgeConfig struct {
 }
 
 type MinimaxConfig struct {
+	BaseURL        string        `mapstructure:"base_url"`
+	APIKey         string        `mapstructure:"api_key"`
+	Model          string        `mapstructure:"model"`
+	RequestTimeout time.Duration `mapstructure:"request_timeout"`
+	MaxTokens      int           `mapstructure:"max_tokens"`
+	Temperature    float64       `mapstructure:"temperature"`
+}
+
+type KimiCodingConfig struct {
 	BaseURL        string        `mapstructure:"base_url"`
 	APIKey         string        `mapstructure:"api_key"`
 	Model          string        `mapstructure:"model"`
@@ -365,12 +375,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("comfyui_bridge.callback_base_url", "")
 	v.SetDefault("comfyui_bridge.default_workflow_id", "")
 	v.SetDefault("comfyui_bridge.default_output_format", "png")
-	v.SetDefault("minimax.base_url", "https://api.minimax.chat/v1")
+	v.SetDefault("minimax.base_url", "https://api.minimaxi.com/v1")
 	v.SetDefault("minimax.api_key", "")
-	v.SetDefault("minimax.model", "MiniMax-M2")
+	v.SetDefault("minimax.model", "MiniMax-M2.7")
 	v.SetDefault("minimax.request_timeout", "60s")
 	v.SetDefault("minimax.max_tokens", 2048)
 	v.SetDefault("minimax.temperature", 0.2)
+	v.SetDefault("kimi_coding.base_url", "https://api.kimi.com/coding")
+	v.SetDefault("kimi_coding.api_key", "")
+	v.SetDefault("kimi_coding.model", "kimi-k2.6")
+	v.SetDefault("kimi_coding.request_timeout", "90s")
+	v.SetDefault("kimi_coding.max_tokens", 4096)
+	v.SetDefault("kimi_coding.temperature", 0.2)
 	v.SetDefault("tasks.enabled", true)
 	v.SetDefault("tasks.expire_interval", "1h")
 	v.SetDefault("tasks.cycle_interval", "1h")
