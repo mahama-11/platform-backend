@@ -83,6 +83,24 @@ bootstrap:
         priority: 100
         enabled: true
         metadata: '{"objective_scores":{"quality":85,"speed":50,"cost":45},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "text_reasoning"
+        provider_code: "minimax_text"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":82,"speed":70,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "intent_planning"
+        provider_code: "minimax_text"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":82,"speed":70,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "prompt_planning"
+        provider_code: "minimax_text"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":82,"speed":70,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
   storage:
     bindings:
       - product_code: "menu"
@@ -176,6 +194,14 @@ volcengine:
   image_size: "2K"
   output_format: "png"
   watermark: false
+
+minimax:
+  base_url: "https://api.minimax.chat/v1"
+  api_key: "change-me-in-config"
+  model: "MiniMax-M2"
+  request_timeout: 60s
+  max_tokens: 2048
+  temperature: 0.2
 
 comfyui_bridge:
   enabled: true
