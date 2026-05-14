@@ -91,7 +91,7 @@ func New(configFile string) (*App, error) {
 		if err != nil {
 			return nil, fmt.Errorf("init runtime queue: %w", err)
 		}
-		runtimeService.UseRuntime(runtimeQueue, nil)
+		runtimeService.UseRuntime(runtimeQueue, runtimeRegistry)
 	}
 	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
 	if cfg.Tasks.Enabled {
