@@ -194,9 +194,9 @@ volcengine:
   watermark: false
 
 minimax:
-  base_url: "https://api.minimax.chat/v1"
+  base_url: "https://api.minimaxi.com/v1"
   api_key: "change-me-in-config"
-  model: "MiniMax-M2"
+  model: "MiniMax-M2.7"
   request_timeout: 60s
   max_tokens: 2048
   temperature: 0.2
