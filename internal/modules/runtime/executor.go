@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -353,20 +354,15 @@ func (s *Service) pollRuntimeJob(job *models.RuntimeJob, now time.Time) error {
 }
 
 func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManifest, completion *ProviderCompletion, now time.Time) error {
-	job.Status = platformconst.StatusCompleted
-	job.Stage = platformconst.StatusCompleted
-	job.StageMessage = completion.StageMessage
-	job.CompletedAt = &now
-	job.OutputManifest = mustMarshal(completion)
-	if err := s.repo.SaveRuntimeJob(job); err != nil {
-		return err
-	}
 	variants := make([]ProductRecordResultVariant, 0, len(completion.Variants))
+	manifestVariants := make([]RuntimeOutputVariantManifest, 0, len(completion.Variants))
 	outputCategory := s.outputStorageCategory(job)
 	for _, variant := range completion.Variants {
 		sourceURL := variant.SourceURL
 		previewURL := firstNonEmpty(variant.PreviewURL, variant.SourceURL)
 		storageKey := ""
+		storageAssetID := ""
+		var fileSize int64
 		if s.storage != nil {
 			switch {
 			case strings.TrimSpace(variant.InlineData) != "":
@@ -384,6 +380,7 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 					return storeErr
 				}
 				storageKey = stored.StorageKey
+				fileSize = stored.FileSize
 				sourceURL = ""
 				previewURL = ""
 				variant.MimeType = firstNonEmpty(stored.MimeType, variant.MimeType)
@@ -396,9 +393,41 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 					return storeErr
 				}
 				storageKey = stored.StorageKey
+				fileSize = stored.FileSize
 				sourceURL = ""
 				previewURL = ""
 				variant.MimeType = firstNonEmpty(stored.MimeType, variant.MimeType)
+			}
+		}
+		assetMetadata := sanitizeProviderCallbackMetadata(variant.Metadata)
+		if s.storage != nil && strings.TrimSpace(storageKey) != "" {
+			registered, registerErr := s.storage.RegisterAsset(context.Background(), assetstorage.RegisterAssetInput{
+				ProductCode: job.ProductCode,
+				Category:    outputCategory,
+				SourceType:  "runtime_output",
+				SourceRef:   fmt.Sprintf("%s:%d", job.ID, variant.Index),
+				StorageKey:  storageKey,
+				MimeType:    variant.MimeType,
+				FileSize:    fileSize,
+				Metadata: map[string]any{
+					"runtime_job_id": job.ID,
+					"task_type":      job.TaskType,
+					"variant_index":  variant.Index,
+					"provider":       job.ProviderCode,
+				},
+				Status: "active",
+			})
+			if registerErr != nil {
+				s.runtimeJobLogger(job).
+					With("variant_index", variant.Index, "output_storage_category", outputCategory, "storage_operation", "register_output", "error", registerErr).
+					Error("runtime.result.register_failed")
+				return registerErr
+			}
+			if registered != nil {
+				storageAssetID = registered.ID
+				if fileSize == 0 {
+					fileSize = registered.FileSize
+				}
 			}
 		}
 		variants = append(variants, ProductRecordResultVariant{
@@ -406,17 +435,61 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 			Status:     "ready",
 			IsSelected: variant.Index == 0,
 			Asset: ProductRecordResultAsset{
-				AssetType:  "generated",
-				SourceType: "generated",
-				FileName:   "",
-				StorageKey: storageKey,
-				SourceURL:  sourceURL,
-				PreviewURL: previewURL,
-				MimeType:   variant.MimeType,
-				Width:      variant.Width,
-				Height:     variant.Height,
+				AssetType:      "generated",
+				SourceType:     "generated",
+				FileName:       "",
+				StorageKey:     storageKey,
+				StorageAssetID: storageAssetID,
+				SourceURL:      sourceURL,
+				PreviewURL:     previewURL,
+				MimeType:       variant.MimeType,
+				FileSize:       fileSize,
+				Width:          variant.Width,
+				Height:         variant.Height,
+				Metadata:       assetMetadata,
 			},
 		})
+		manifestVariants = append(manifestVariants, RuntimeOutputVariantManifest{
+			Index:      variant.Index,
+			Status:     "ready",
+			IsSelected: variant.Index == 0,
+			Asset: RuntimeOutputAssetManifest{
+				AssetType:      "generated",
+				SourceType:     "generated",
+				StorageKey:     storageKey,
+				StorageAssetID: storageAssetID,
+				SourceURL:      sourceURL,
+				PreviewURL:     previewURL,
+				MimeType:       variant.MimeType,
+				FileSize:       fileSize,
+				Width:          variant.Width,
+				Height:         variant.Height,
+				Metadata:       assetMetadata,
+			},
+		})
+	}
+	job.Status = platformconst.StatusCompleted
+	job.Stage = platformconst.StatusCompleted
+	job.StageMessage = completion.StageMessage
+	job.CompletedAt = &now
+	job.OutputManifest = mustMarshal(RuntimeOutputManifest{
+		Contract:     "platform.runtime.output.v1",
+		RuntimeJobID: job.ID,
+		ProductCode:  job.ProductCode,
+		TaskType:     job.TaskType,
+		ProviderCode: job.ProviderCode,
+		Status:       platformconst.StatusCompleted,
+		Progress:     completion.Progress,
+		StageMessage: completion.StageMessage,
+		Storage: map[string]any{
+			"output_category": outputCategory,
+			"registry":        "platform_storage_assets",
+		},
+		Variants:     manifestVariants,
+		ProviderMeta: sanitizeProviderCallbackMetadata(completion.Metadata),
+	})
+	if err := s.saveRuntimeJobWithTerminalChargeBinding(job, platformconst.StatusCompleted); err != nil {
+		return err
 	}
 	s.runtimeJobLogger(job).
 		With("variant_count", len(variants), "output_storage_category", outputCategory).
@@ -425,7 +498,7 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 		Status:       platformconst.StatusCompleted,
 		Progress:     completion.Progress,
 		StageMessage: completion.StageMessage,
-		Metadata:     completion.Metadata,
+		Metadata:     sanitizeProviderCallbackMetadata(completion.Metadata),
 		Variants:     variants,
 	}); err != nil {
 		s.runtimeJobLogger(job).
@@ -481,7 +554,7 @@ func (s *Service) failRuntimeJob(job *models.RuntimeJob, errorClass, errorCode, 
 	job.ErrorMessage = message
 	job.CompletedAt = &now
 	job.NextRetryAt = nil
-	if err := s.repo.SaveRuntimeJob(job); err != nil {
+	if err := s.saveRuntimeJobWithTerminalChargeBinding(job, platformconst.StatusFailed); err != nil {
 		return err
 	}
 	s.runtimeJobLogger(job).
@@ -536,6 +609,100 @@ func decodeJSONMap(raw string) map[string]any {
 		out = map[string]any{}
 	}
 	return out
+}
+
+func sanitizeProviderCallbackMetadata(raw map[string]any) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	out, _ := sanitizeProviderCallbackMetadataValue(raw).(map[string]any)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func sanitizeProviderCallbackMetadataValue(raw any) any {
+	switch value := raw.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(value))
+		for key, child := range value {
+			if isRuntimeSensitiveMetadataKey(key) {
+				continue
+			}
+			if sanitized := sanitizeProviderCallbackMetadataValue(child); sanitized != nil {
+				out[key] = sanitized
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case []any:
+		out := make([]any, 0, len(value))
+		for _, child := range value {
+			if sanitized := sanitizeProviderCallbackMetadataValue(child); sanitized != nil {
+				out = append(out, sanitized)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	default:
+		rv := reflect.ValueOf(raw)
+		if !rv.IsValid() {
+			return nil
+		}
+		switch rv.Kind() {
+		case reflect.Map:
+			out := map[string]any{}
+			for _, key := range rv.MapKeys() {
+				if key.Kind() != reflect.String || isRuntimeSensitiveMetadataKey(key.String()) {
+					continue
+				}
+				child := rv.MapIndex(key)
+				if child.IsValid() && child.CanInterface() {
+					if sanitized := sanitizeProviderCallbackMetadataValue(child.Interface()); sanitized != nil {
+						out[key.String()] = sanitized
+					}
+				}
+			}
+			if len(out) == 0 {
+				return nil
+			}
+			return out
+		case reflect.Slice, reflect.Array:
+			out := make([]any, 0, rv.Len())
+			for i := 0; i < rv.Len(); i++ {
+				child := rv.Index(i)
+				if child.IsValid() && child.CanInterface() {
+					if sanitized := sanitizeProviderCallbackMetadataValue(child.Interface()); sanitized != nil {
+						out = append(out, sanitized)
+					}
+				}
+			}
+			if len(out) == 0 {
+				return nil
+			}
+			return out
+		}
+		return raw
+	}
+}
+
+func isRuntimeSensitiveMetadataKey(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	if lower == "" {
+		return true
+	}
+	blocked := []string{"credential", "secret", "api_key", "apikey", "token", "password", "billing", "charge", "wallet", "internal", "provider_response", "raw_payload", "storage_key", "connection", "dsn"}
+	for _, word := range blocked {
+		if lower == word || strings.Contains(lower, word) {
+			return true
+		}
+	}
+	return false
 }
 
 func mustMarshal(value any) string {

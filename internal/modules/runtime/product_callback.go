@@ -29,29 +29,32 @@ type ProductUpdateRuntimeInput struct {
 }
 
 type ProductRecordResultAsset struct {
-	AssetType  string `json:"asset_type"`
-	SourceType string `json:"source_type"`
-	FileName   string `json:"file_name,omitempty"`
-	StorageKey string `json:"storage_key,omitempty"`
-	SourceURL  string `json:"source_url"`
-	PreviewURL string `json:"preview_url,omitempty"`
-	MimeType   string `json:"mime_type,omitempty"`
-	Width      int    `json:"width,omitempty"`
-	Height     int    `json:"height,omitempty"`
+	AssetType      string         `json:"asset_type"`
+	SourceType     string         `json:"source_type"`
+	FileName       string         `json:"file_name,omitempty"`
+	StorageKey     string         `json:"storage_key,omitempty"`
+	StorageAssetID string         `json:"storage_asset_id,omitempty"`
+	SourceURL      string         `json:"source_url"`
+	PreviewURL     string         `json:"preview_url,omitempty"`
+	MimeType       string         `json:"mime_type,omitempty"`
+	FileSize       int64          `json:"file_size,omitempty"`
+	Width          int            `json:"width,omitempty"`
+	Height         int            `json:"height,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 }
 
 type ProductRecordResultVariant struct {
-	Index      int                    `json:"index"`
-	Status     string                 `json:"status"`
-	IsSelected bool                   `json:"is_selected,omitempty"`
+	Index      int                      `json:"index"`
+	Status     string                   `json:"status"`
+	IsSelected bool                     `json:"is_selected,omitempty"`
 	Asset      ProductRecordResultAsset `json:"asset"`
 }
 
 type ProductRecordResultsInput struct {
-	Status       string                     `json:"status"`
-	Progress     int                        `json:"progress"`
-	StageMessage string                     `json:"stage_message,omitempty"`
-	Metadata     map[string]any             `json:"metadata,omitempty"`
+	Status       string                       `json:"status"`
+	Progress     int                          `json:"progress"`
+	StageMessage string                       `json:"stage_message,omitempty"`
+	Metadata     map[string]any               `json:"metadata,omitempty"`
 	Variants     []ProductRecordResultVariant `json:"variants"`
 }
 

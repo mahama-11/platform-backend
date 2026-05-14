@@ -178,6 +178,10 @@ GET /internal/v1/wallet/accounts?billing_subject_type=organization&billing_subje
 - `GET /internal/v1/metering/settlements/:eventID`
 - `POST /internal/v1/metering/settlements/:eventID/reverse`
 - `GET /internal/v1/metering/discounts`
+- `GET /internal/v1/runtime/capabilities`
+  - Read-only product-scoped runtime capability matrix.
+  - Required query: `product_code`; optional query: `task_type`.
+  - Returns known P0 runtime task types (`image_understanding`, `ocr`, `image_generation`, `image_inpainting`, `video_keyframe`) with provider/callback/storage/billing readiness and stable reason codes such as `contract-needed`, `provider_binding_missing`, `storage_binding_missing`, and `billable_item_missing`.
 - `POST /internal/v1/incentives/rewards`
 - `GET /internal/v1/incentives/referral-programs`
 - `POST /internal/v1/incentives/referral-programs`

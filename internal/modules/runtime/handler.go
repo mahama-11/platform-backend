@@ -1,7 +1,11 @@
 package runtime
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"strconv"
+	"strings"
 
 	audit "platform-service/internal/modules/audit"
 	"platform-service/internal/telemetry"
@@ -47,6 +51,37 @@ func (h *Handler) ListProviderDefinitions(c *gin.Context) {
 		return
 	}
 	response.JSONSuccess(c, gin.H{"items": items})
+}
+
+// ListRuntimeCapabilities godoc
+// @Summary List runtime capability matrix
+// @Description Returns product-scoped runtime task capabilities derived from existing provider, callback, storage, and billing records.
+// @Tags internal-runtime
+// @Produce json
+// @Param product_code query string true "Product code"
+// @Param task_type query string false "Optional runtime task type filter"
+// @Success 200 {object} response.SuccessResponse
+// @Failure 400 {object} response.ErrorResponse
+// @Failure 500 {object} response.ErrorResponse
+// @Router /internal/v1/runtime/capabilities [get]
+func (h *Handler) ListRuntimeCapabilities(c *gin.Context) {
+	span := telemetry.StartGinSpan(c, "platform-service/runtime-handler", "runtime.capability.list")
+	defer span.End()
+	result, err := h.service.ListRuntimeCapabilities(c.Query("product_code"), c.Query("task_type"))
+	if err != nil {
+		span.RecordError(err)
+		if c.Query("product_code") == "" {
+			response.WriteObservedSemanticError(c, err, response.CodeMissingParameter, "product_code is required", "RUNTIME_PRODUCT_CODE_REQUIRED", "Pass product_code explicitly; platform internal read APIs do not widen to all products by default.")
+			return
+		}
+		if errors.Is(err, errRuntimeTaskTypeUnknown) {
+			response.WriteObservedSemanticError(c, err, response.CodeInvalidParameter, "unknown runtime task_type", "RUNTIME_TASK_TYPE_UNKNOWN", "Use one of the platform P0 task types: image_understanding, ocr, image_generation, image_inpainting, video_keyframe.")
+			return
+		}
+		response.WriteObservedSemanticError(c, err, response.CodeInternalError, "failed to list runtime capabilities", "RUNTIME_CAPABILITY_LIST_FAILED", "Retry the query and inspect platform logs with request_id, product_code, and task_type if the issue persists.")
+		return
+	}
+	response.JSONSuccess(c, result)
 }
 
 func (h *Handler) CreateRuntimeJob(c *gin.Context) {
@@ -225,7 +260,19 @@ func (h *Handler) ProviderCallback(c *gin.Context) {
 		response.JSONError(c, response.CodeForbidden, "invalid callback signature")
 		return
 	}
-	if err := h.service.HandleProviderCallback(c.Param("providerCode"), c.Query("runtime_job_id"), expiresAt, c.Query("sig")); err != nil {
+	var payload *NormalizedProviderCallbackPayload
+	if c.Request != nil && c.Request.Body != nil {
+		body, readErr := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
+		if readErr == nil && strings.TrimSpace(string(body)) != "" {
+			var parsed NormalizedProviderCallbackPayload
+			if bindErr := json.Unmarshal(body, &parsed); bindErr != nil {
+				response.JSONError(c, response.CodeBadRequest, "invalid provider callback payload")
+				return
+			}
+			payload = &parsed
+		}
+	}
+	if err := h.service.HandleProviderCallbackPayload(c.Param("providerCode"), c.Query("runtime_job_id"), expiresAt, c.Query("sig"), payload); err != nil {
 		span.RecordError(err)
 		response.WriteObservedSemanticError(c, err, response.CodeForbidden, "provider callback rejected", "RUNTIME_PROVIDER_CALLBACK_REJECTED", "Verify runtime_job_id, expires, signature, and callback secret before retrying the provider callback.")
 		return

@@ -85,6 +85,8 @@ func newRuntimeFullTestDB(t *testing.T) *gorm.DB {
 		&models.RuntimeAttempt{},
 		&models.ChargeSession{},
 		&models.RuntimeCallbackDelivery{},
+		&models.Product{},
+		&models.BillableItem{},
 	); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}

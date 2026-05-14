@@ -107,6 +107,16 @@ func (r *RuntimeRepository) ListProviderBindings(productCode, taskType string) (
 	return items, nil
 }
 
+func (r *RuntimeRepository) ListAllProviderBindings(productCode, taskType string) ([]models.RuntimeProviderBinding, error) {
+	var items []models.RuntimeProviderBinding
+	if err := r.db.Where("product_code = ? AND task_type = ?", productCode, taskType).
+		Order("priority ASC, created_at ASC").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (r *RuntimeRepository) CreateStorageBinding(item *models.StorageBinding) error {
 	return r.db.Create(item).Error
 }

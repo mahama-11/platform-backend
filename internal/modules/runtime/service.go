@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"platform-service/internal/config"
@@ -348,6 +349,12 @@ func (s *Service) UpdateRuntimeJob(id string, input UpdateRuntimeJobInput) (*mod
 	case platformconst.StatusFailed:
 		item.NextRetryAt = nil
 	}
+	if input.Status == platformconst.StatusCompleted || input.Status == platformconst.StatusFailed || input.Status == platformconst.StatusCanceled {
+		if err := s.saveRuntimeJobWithTerminalChargeBinding(item, input.Status); err != nil {
+			return nil, err
+		}
+		return item, nil
+	}
 	if err := s.repo.SaveRuntimeJob(item); err != nil {
 		return nil, err
 	}
@@ -422,6 +429,176 @@ func (s *Service) CreateChargeSession(input CreateChargeSessionInput) (*models.C
 
 func (s *Service) GetChargeSession(id string) (*models.ChargeSession, error) {
 	return s.repo.FindChargeSessionByID(id)
+}
+
+func (s *Service) saveRuntimeJobWithTerminalChargeBinding(job *models.RuntimeJob, terminalStatus string) error {
+	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(job).Error; err != nil {
+			return err
+		}
+		return s.bindRuntimeTerminalChargeSessionTx(tx, job, terminalStatus)
+	})
+}
+
+func (s *Service) bindRuntimeTerminalChargeSessionTx(tx *gorm.DB, job *models.RuntimeJob, terminalStatus string) error {
+	if job == nil || strings.TrimSpace(job.ChargeSessionID) == "" {
+		return nil
+	}
+	var session models.ChargeSession
+	if err := tx.Where("id = ?", job.ChargeSessionID).First(&session).Error; err != nil {
+		return err
+	}
+	if err := validateRuntimeChargeSessionBoundary(job, &session); err != nil {
+		return err
+	}
+	if isTerminalChargeSessionStatus(session.Status) {
+		return nil
+	}
+	switch terminalStatus {
+	case platformconst.StatusCompleted:
+		if session.Status == platformconst.StatusCreated {
+			if err := transitionChargeSessionTx(tx, &session, UpdateChargeSessionInput{
+				Status:        platformconst.ReservationStatusReserved,
+				ReservationID: defaultString(session.ReservationID, "runtime-reservation-"+job.ID),
+			}); err != nil {
+				return err
+			}
+		}
+		units := finalUnitsForRuntimeJob(job, &session)
+		return transitionChargeSessionTx(tx, &session, UpdateChargeSessionInput{
+			Status:         platformconst.SettlementStatusSettled,
+			FinalUnits:     &units,
+			FinalizationID: defaultString(session.FinalizationID, "runtime-finalization-"+job.ID),
+			SettlementID:   defaultString(session.SettlementID, "runtime-settlement-"+job.ID),
+			Metadata:       mergeRuntimeChargeMetadata(session.Metadata, job, terminalStatus),
+		})
+	case platformconst.StatusFailed:
+		if session.Status == platformconst.ReservationStatusReserved {
+			return transitionChargeSessionTx(tx, &session, UpdateChargeSessionInput{
+				Status:   platformconst.ReservationStatusReleased,
+				Metadata: mergeRuntimeChargeMetadata(session.Metadata, job, terminalStatus),
+			})
+		}
+		return transitionChargeSessionTx(tx, &session, UpdateChargeSessionInput{
+			Status:   platformconst.StatusFailed,
+			Metadata: mergeRuntimeChargeMetadata(session.Metadata, job, terminalStatus),
+		})
+	case platformconst.StatusCanceled:
+		if session.Status == platformconst.ReservationStatusReserved {
+			return transitionChargeSessionTx(tx, &session, UpdateChargeSessionInput{
+				Status:   platformconst.ReservationStatusReleased,
+				Metadata: mergeRuntimeChargeMetadata(session.Metadata, job, terminalStatus),
+			})
+		}
+		return transitionChargeSessionTx(tx, &session, UpdateChargeSessionInput{
+			Status:   platformconst.StatusCanceled,
+			Metadata: mergeRuntimeChargeMetadata(session.Metadata, job, terminalStatus),
+		})
+	default:
+		return nil
+	}
+}
+
+func validateRuntimeChargeSessionBoundary(job *models.RuntimeJob, session *models.ChargeSession) error {
+	if job == nil || session == nil {
+		return fmt.Errorf("runtime charge session boundary missing job or charge session")
+	}
+	if session.ProductCode != "" && job.ProductCode != "" && session.ProductCode != job.ProductCode {
+		return fmt.Errorf("runtime charge session product mismatch: job=%s charge_session=%s", job.ProductCode, session.ProductCode)
+	}
+	if session.OrganizationID != "" && job.OrganizationID != "" && session.OrganizationID != job.OrganizationID {
+		return fmt.Errorf("runtime charge session organization mismatch: job=%s charge_session=%s", job.OrganizationID, session.OrganizationID)
+	}
+	if session.UserID != "" && job.UserID != "" && session.UserID != job.UserID {
+		return fmt.Errorf("runtime charge session user mismatch: job=%s charge_session=%s", job.UserID, session.UserID)
+	}
+	if session.SourceType == "runtime_job" {
+		if session.SourceID != job.ID {
+			return fmt.Errorf("runtime charge session runtime source mismatch: runtime_job_id=%s charge_source=%s", job.ID, session.SourceID)
+		}
+		return nil
+	}
+	if session.SourceType != "" && job.SourceType != "" && session.SourceType != job.SourceType {
+		return fmt.Errorf("runtime charge session source type mismatch: job_source_type=%s charge_source_type=%s", job.SourceType, session.SourceType)
+	}
+	if session.SourceID != "" && job.SourceID != "" && session.SourceID != job.SourceID {
+		return fmt.Errorf("runtime charge session source mismatch: job_source=%s charge_source=%s", job.SourceID, session.SourceID)
+	}
+	return nil
+}
+
+func transitionChargeSessionTx(tx *gorm.DB, item *models.ChargeSession, input UpdateChargeSessionInput) error {
+	now := time.Now()
+	if input.Status != "" {
+		if err := validateChargeSessionStatusTransition(item.Status, input.Status); err != nil {
+			return err
+		}
+		item.Status = input.Status
+	}
+	if input.ReservationID != "" {
+		item.ReservationID = input.ReservationID
+	}
+	if input.FinalizationID != "" {
+		item.FinalizationID = input.FinalizationID
+	}
+	if input.EventID != "" {
+		item.EventID = input.EventID
+	}
+	if input.SettlementID != "" {
+		item.SettlementID = input.SettlementID
+	}
+	if input.FinalUnits != nil {
+		item.FinalUnits = *input.FinalUnits
+	}
+	if input.RouteSnapshot != "" {
+		item.RouteSnapshot = input.RouteSnapshot
+	}
+	if input.Metadata != "" {
+		item.Metadata = input.Metadata
+	}
+	switch item.Status {
+	case platformconst.ReservationStatusReserved:
+		item.ReservedAt = &now
+	case platformconst.SettlementStatusSettled:
+		item.FinalizedAt = &now
+	case platformconst.ReservationStatusReleased:
+		item.ReleasedAt = &now
+	}
+	return tx.Save(item).Error
+}
+
+func isTerminalChargeSessionStatus(status string) bool {
+	switch status {
+	case platformconst.SettlementStatusSettled, platformconst.ReservationStatusReleased, platformconst.StatusCanceled, platformconst.StatusFailed:
+		return true
+	default:
+		return false
+	}
+}
+
+func finalUnitsForRuntimeJob(_ *models.RuntimeJob, session *models.ChargeSession) int64 {
+	if session != nil {
+		if session.FinalUnits > 0 {
+			return session.FinalUnits
+		}
+		if session.EstimatedUnits > 0 {
+			return session.EstimatedUnits
+		}
+	}
+	return 1
+}
+
+func mergeRuntimeChargeMetadata(raw string, job *models.RuntimeJob, terminalStatus string) string {
+	metadata := decodeJSONMap(raw)
+	metadata["runtime_job_id"] = ""
+	metadata["runtime_terminal_status"] = terminalStatus
+	if job != nil {
+		metadata["runtime_job_id"] = job.ID
+		metadata["provider_code"] = job.ProviderCode
+		metadata["provider_job_id"] = job.ProviderJobID
+		metadata["task_type"] = job.TaskType
+	}
+	return mustMarshal(metadata)
 }
 
 func (s *Service) ListChargeSessions(input ListChargeSessionsInput) (*ChargeSessionListResult, error) {
@@ -500,6 +677,10 @@ func (s *Service) UpdateChargeSession(id string, input UpdateChargeSessionInput)
 }
 
 func (s *Service) HandleProviderCallback(providerCode, runtimeJobID string, expiresAt int64, sig string) error {
+	return s.HandleProviderCallbackPayload(providerCode, runtimeJobID, expiresAt, sig, nil)
+}
+
+func (s *Service) HandleProviderCallbackPayload(providerCode, runtimeJobID string, expiresAt int64, sig string, payload *NormalizedProviderCallbackPayload) error {
 	if !s.validateProviderCallbackSignature(runtimeJobID, expiresAt, sig) {
 		return fmt.Errorf("invalid provider callback signature")
 	}
@@ -513,7 +694,60 @@ func (s *Service) HandleProviderCallback(providerCode, runtimeJobID string, expi
 	if providerCode != "" && job.ProviderCode != "" && providerCode != job.ProviderCode && !(providerCode == "comfyui" && job.ProviderCode == "comfyui_bridge") {
 		return fmt.Errorf("provider callback mismatch")
 	}
-	return s.pollRuntimeJob(job, time.Now())
+	if payload == nil || strings.TrimSpace(payload.Status) == "" {
+		return s.pollRuntimeJob(job, time.Now())
+	}
+	if payload.ProviderCode == "" {
+		payload.ProviderCode = providerCode
+	}
+	if payload.ProviderJobID != "" && job.ProviderJobID == "" {
+		job.ProviderJobID = payload.ProviderJobID
+	}
+	now := time.Now()
+	switch strings.ToLower(strings.TrimSpace(payload.Status)) {
+	case platformconst.StatusCompleted, "succeeded", "success":
+		completion := payload.Completion
+		if completion == nil {
+			completion = &ProviderCompletion{Status: platformconst.StatusCompleted, Progress: payload.Progress, StageMessage: payload.StageMessage, Variants: payload.Variants, Metadata: payload.Metadata}
+		}
+		if completion.Progress <= 0 {
+			completion.Progress = 100
+		}
+		if completion.Status == "" {
+			completion.Status = platformconst.StatusCompleted
+		}
+		if len(completion.Variants) == 0 {
+			return s.failRuntimeJob(job, "provider_callback_invalid", "PROVIDER_CALLBACK_INVALID", "provider callback completed without variants", now)
+		}
+		input, _ := decodeRuntimeInputManifest(job.InputManifest)
+		return s.completeRuntimeJob(job, input, completion, now)
+	case platformconst.StatusFailed, "error":
+		return s.failRuntimeJob(job, defaultString(payload.ErrorClass, "provider_failed"), defaultString(payload.ErrorCode, "PROVIDER_CALLBACK_FAILED"), defaultString(payload.ErrorMessage, payload.StageMessage), now)
+	case platformconst.StatusCanceled, "cancelled":
+		return s.cancelRuntimeJobFromProviderCallback(job, defaultString(payload.StageMessage, "Provider canceled runtime job"), now)
+	case platformconst.StatusQueued, platformconst.StatusProcessing, "running", "in_progress":
+		progress := payload.Progress
+		job.Status = platformconst.StatusProcessing
+		job.Stage = defaultString(payload.Stage, "provider_running")
+		job.StageMessage = defaultString(payload.StageMessage, "Provider is still processing")
+		if err := s.repo.SaveRuntimeJob(job); err != nil {
+			return err
+		}
+		return s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{Status: platformconst.StatusProcessing, Stage: job.Stage, StageMessage: job.StageMessage, Progress: &progress, ProviderJobID: job.ProviderJobID})
+	default:
+		return fmt.Errorf("invalid provider callback status: %s", payload.Status)
+	}
+}
+
+func (s *Service) cancelRuntimeJobFromProviderCallback(job *models.RuntimeJob, message string, now time.Time) error {
+	job.Status = platformconst.StatusCanceled
+	job.Stage = platformconst.StatusCanceled
+	job.StageMessage = message
+	job.CompletedAt = &now
+	if err := s.saveRuntimeJobWithTerminalChargeBinding(job, platformconst.StatusCanceled); err != nil {
+		return err
+	}
+	return s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{Status: platformconst.StatusCanceled, Stage: platformconst.StatusCanceled, StageMessage: message, ProviderJobID: job.ProviderJobID})
 }
 
 func (s *Service) validateProviderCallbackSignature(runtimeJobID string, expiresAt int64, sig string) bool {
@@ -569,10 +803,10 @@ func validateRuntimeJobStatusTransition(from, to string) error {
 
 // ChargeSession 合法状态转移白名单
 var validChargeSessionTransitions = map[string][]string{
-	platformconst.StatusCreated:              {platformconst.ReservationStatusReserved, platformconst.StatusCanceled, platformconst.StatusFailed},
-	platformconst.ReservationStatusReserved:  {platformconst.SettlementStatusSettled, platformconst.ReservationStatusReleased, platformconst.StatusFailed},
-	platformconst.ReservationStatusReleased:  {},
-	platformconst.SettlementStatusSettled:     {},
+	platformconst.StatusCreated:             {platformconst.ReservationStatusReserved, platformconst.StatusCanceled, platformconst.StatusFailed},
+	platformconst.ReservationStatusReserved: {platformconst.SettlementStatusSettled, platformconst.ReservationStatusReleased, platformconst.StatusFailed},
+	platformconst.ReservationStatusReleased: {},
+	platformconst.SettlementStatusSettled:   {},
 }
 
 func validateChargeSessionStatusTransition(from, to string) error {

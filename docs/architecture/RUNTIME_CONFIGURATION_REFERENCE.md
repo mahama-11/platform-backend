@@ -122,7 +122,15 @@ Meaning:
 
 ### 4.2 `task_type`
 
-Current common value:
+P0 known platform runtime task types:
+
+- `image_understanding` — generic visual analysis; P0 contract status is `contract-needed`.
+- `ocr` — generic text/region extraction; P0 contract status is `contract-needed`.
+- `image_generation` — generate image variants from prompt/source assets; P0 contract status is `ready` when configured.
+- `image_inpainting` — masked image edit/fill; P0 contract status is `contract-needed`.
+- `video_keyframe` — representative video frame extraction/derivation; P0 contract status is `contract-needed`.
+
+Current configured production-capable value:
 
 - `image_generation`
 
@@ -130,9 +138,41 @@ Meaning:
 
 - the product-side runtime use case that provider bindings match against
 
-Important rule:
+Important rules:
 
 - product backends must create runtime jobs using the exact same `task_type` value configured in provider bindings
+- task types are generic platform runtime capabilities and must not encode product workflow stages or SKU semantics
+
+### 4.3 Runtime capability matrix API
+
+Internal read API:
+
+```text
+GET /internal/v1/runtime/capabilities?product_code=ecommerce
+GET /internal/v1/runtime/capabilities?product_code=ecommerce&task_type=image_generation
+```
+
+The API derives availability from existing runtime/provider/storage/commercial records without a DB migration:
+
+- `RuntimeProductEndpoint` and supported `callback_kind`
+- `StorageBinding` for the resolved output category (`output_storage_category` metadata first, then runtime/fallback bindings)
+- `BillableItem` for expected runtime task billing codes such as `ecommerce_runtime_image_generation`
+- `RuntimeProviderBinding`, runtime provider registry, and provider definition status
+- code-level P0 task contract definitions
+
+Stable reason codes include:
+
+- `contract-needed`
+- `provider_binding_missing`
+- `provider_binding_disabled`
+- `provider_not_registered`
+- `provider_inactive`
+- `callback_endpoint_missing`
+- `callback_kind_unsupported`
+- `storage_binding_missing`
+- `billable_item_missing`
+
+`contract-needed` is intentionally returned first for P0 draft task types so product backends can branch on a stable unsupported-contract reason instead of treating the gap as only a missing provider configuration.
 
 ## 5. Metadata Keys Consumed by Runtime
 
