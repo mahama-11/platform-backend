@@ -72,15 +72,26 @@ func TestSeedEcommerceVisibleBaselineIdempotent(t *testing.T) {
 	if err := SeedLocalDefaults(db, cfg); err != nil {
 		t.Fatalf("SeedLocalDefaults second run: %v", err)
 	}
-	var products, skus, packages, billableItems, rateCards, assets, quotaPolicies int64
+	var products, skus, packages, billableItems, runtimeBillableItems, rateCards, assets, quotaPolicies int64
 	_ = db.Model(&models.Product{}).Where("code = ?", "ecommerce").Count(&products).Error
 	_ = db.Model(&models.SKU{}).Where("product_id <> ''").Count(&skus).Error
 	_ = db.Model(&models.CommercialPackage{}).Where("product_id <> ''").Count(&packages).Error
 	_ = db.Model(&models.BillableItem{}).Where("code LIKE ?", "ecommerce.%").Count(&billableItems).Error
+	_ = db.Model(&models.BillableItem{}).Where("code LIKE ?", "ecommerce_runtime_%").Count(&runtimeBillableItems).Error
 	_ = db.Model(&models.RateCard{}).Where("code LIKE ?", "ecommerce.%").Count(&rateCards).Error
 	_ = db.Model(&models.AssetDefinition{}).Where("product_code = ?", "ecommerce").Count(&assets).Error
 	_ = db.Model(&models.QuotaGrantPolicy{}).Where("product_code = ?", "ecommerce").Count(&quotaPolicies).Error
-	if products != 1 || skus != 5 || packages != 5 || billableItems != 1 || rateCards != 6 || assets != 4 || quotaPolicies != 5 {
-		t.Fatalf("unexpected visible baseline counts: products=%d skus=%d packages=%d billableItems=%d rateCards=%d assets=%d quotaPolicies=%d", products, skus, packages, billableItems, rateCards, assets, quotaPolicies)
+	if products != 1 || skus != 5 || packages != 5 || billableItems != 1 || runtimeBillableItems != 6 || rateCards != 6 || assets != 4 || quotaPolicies != 5 {
+		t.Fatalf("unexpected visible baseline counts: products=%d skus=%d packages=%d billableItems=%d runtimeBillableItems=%d rateCards=%d assets=%d quotaPolicies=%d", products, skus, packages, billableItems, runtimeBillableItems, rateCards, assets, quotaPolicies)
+	}
+
+	for _, code := range []string{"ecommerce_runtime_image_generation", "ecommerce_runtime_intent_planning", "ecommerce_runtime_prompt_planning", "ecommerce_runtime_strategy_report"} {
+		var item models.BillableItem
+		if err := db.Where("code = ?", code).First(&item).Error; err != nil {
+			t.Fatalf("expected runtime billable item %s: %v", code, err)
+		}
+		if item.MeterUnit != "action" || item.SettlementMode != "credits" {
+			t.Fatalf("unexpected runtime billable contract for %s: %+v", code, item)
+		}
 	}
 }
