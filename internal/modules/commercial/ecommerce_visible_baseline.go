@@ -57,6 +57,20 @@ func SeedEcommerceVisibleBaseline(db *gorm.DB) error {
 			return err
 		}
 
+		runtimeBillables := []models.BillableItem{
+			{ID: "billable_ecommerce_runtime_image_understanding", ProductID: product.ID, Code: "ecommerce_runtime_image_understanding", Name: "Ecommerce Runtime Image Understanding", MeterUnit: "action", BillingScope: "organization", SettlementMode: "credits", PricingBehavior: "standard", Status: platformconst.StatusActive, Metadata: `{"runtime_task_type":"image_understanding"}`, CreatedAt: now, UpdatedAt: now},
+			{ID: "billable_ecommerce_runtime_image_generation", ProductID: product.ID, Code: "ecommerce_runtime_image_generation", Name: "Ecommerce Runtime Image Generation", MeterUnit: "action", BillingScope: "organization", SettlementMode: "credits", PricingBehavior: "standard", Status: platformconst.StatusActive, Metadata: `{"runtime_task_type":"image_generation"}`, CreatedAt: now, UpdatedAt: now},
+			{ID: "billable_ecommerce_runtime_text_reasoning", ProductID: product.ID, Code: "ecommerce_runtime_text_reasoning", Name: "Ecommerce Runtime Text Reasoning", MeterUnit: "action", BillingScope: "organization", SettlementMode: "credits", PricingBehavior: "standard", Status: platformconst.StatusActive, Metadata: `{"runtime_task_type":"text_reasoning"}`, CreatedAt: now, UpdatedAt: now},
+			{ID: "billable_ecommerce_runtime_intent_planning", ProductID: product.ID, Code: "ecommerce_runtime_intent_planning", Name: "Ecommerce Runtime Intent Planning", MeterUnit: "action", BillingScope: "organization", SettlementMode: "credits", PricingBehavior: "standard", Status: platformconst.StatusActive, Metadata: `{"runtime_task_type":"intent_planning"}`, CreatedAt: now, UpdatedAt: now},
+			{ID: "billable_ecommerce_runtime_prompt_planning", ProductID: product.ID, Code: "ecommerce_runtime_prompt_planning", Name: "Ecommerce Runtime Prompt Planning", MeterUnit: "action", BillingScope: "organization", SettlementMode: "credits", PricingBehavior: "standard", Status: platformconst.StatusActive, Metadata: `{"runtime_task_type":"prompt_planning"}`, CreatedAt: now, UpdatedAt: now},
+			{ID: "billable_ecommerce_runtime_strategy_report", ProductID: product.ID, Code: "ecommerce_runtime_strategy_report", Name: "Ecommerce Runtime Strategy Report", MeterUnit: "action", BillingScope: "organization", SettlementMode: "credits", PricingBehavior: "standard", Status: platformconst.StatusActive, Metadata: `{"runtime_task_type":"strategy_report"}`, CreatedAt: now, UpdatedAt: now},
+		}
+		for i := range runtimeBillables {
+			if _, err := upsertVisibleBillableItem(tx, runtimeBillables[i]); err != nil {
+				return err
+			}
+		}
+
 		type visibleOffer struct {
 			skuID       string
 			skuCode     string
