@@ -230,7 +230,7 @@ func (s *Service) buildRuntimeCapabilityItem(productCode string, definition runt
 				_, registryErr := s.registry.Get(binding.ProviderCode)
 				capability.Registered = registryErr == nil
 			} else {
-				capability.Registered = binding.ProviderCode == "manual" || binding.ProviderCode == "mock" || binding.ProviderCode == "volcengine"
+				capability.Registered = binding.ProviderCode == "manual" || binding.ProviderCode == "mock" || binding.ProviderCode == "volcengine" || binding.ProviderCode == "minimax_text" || binding.ProviderCode == "kimi_coding_text"
 			}
 			providerActive := providerDefinition == nil || providerDefinition.Status == platformconst.StatusActive
 			if binding.Enabled && capability.Registered && providerActive {
