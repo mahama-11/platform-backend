@@ -4,12 +4,15 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"platform-service/internal/models"
+	assetstorage "platform-service/internal/modules/assetstorage"
 )
 
 func TestCreateRuntimeJobEnqueuesAndSupportsIdempotency(t *testing.T) {
@@ -100,10 +103,10 @@ func TestUpdateRuntimeJobRecordAttemptAndChargeSession(t *testing.T) {
 	}
 	attemptCount := 2
 	updated, err := service.UpdateRuntimeJob(job.ID, UpdateRuntimeJobInput{
-		Status:        "completed",
-		Stage:         "completed",
-		StageMessage:  "done",
-		ProviderJobID: "provider-job-2",
+		Status:         "completed",
+		Stage:          "completed",
+		StageMessage:   "done",
+		ProviderJobID:  "provider-job-2",
 		OutputManifest: "{}",
 		RouteSnapshot:  `{"objective":"quality"}`,
 		Metadata:       `{"k":"v"}`,
@@ -141,7 +144,7 @@ func TestUpdateRuntimeJobRecordAttemptAndChargeSession(t *testing.T) {
 	}
 	// 先转移到 reserved
 	session, err = service.UpdateChargeSession(session.ID, UpdateChargeSessionInput{
-		Status:       "reserved",
+		Status:        "reserved",
 		ReservationID: "reservation-1",
 	})
 	if err != nil {
@@ -253,14 +256,14 @@ func TestRuntimeJobStateMachine_InvalidTransitions(t *testing.T) {
 		from string
 		to   string
 	}{
-		{"queued", "completed"},    // skip processing
-		{"completed", "queued"},    // terminal
-		{"completed", "processing"},// terminal
-		{"canceled", "queued"},     // terminal
-		{"canceled", "processing"}, // terminal
-		{"failed", "completed"},    // must retry via queued first
-		{"failed", "processing"},   // must retry via queued first
-		{"processing", "queued"},   // backwards
+		{"queued", "completed"},     // skip processing
+		{"completed", "queued"},     // terminal
+		{"completed", "processing"}, // terminal
+		{"canceled", "queued"},      // terminal
+		{"canceled", "processing"},  // terminal
+		{"failed", "completed"},     // must retry via queued first
+		{"failed", "processing"},    // must retry via queued first
+		{"processing", "queued"},    // backwards
 	}
 
 	for i, tc := range cases {
@@ -317,6 +320,210 @@ func TestRuntimeJobStateMachine_SameStatusNoop(t *testing.T) {
 // ---------------------------------------------------------------------------
 // ChargeSession State Machine Tests
 // ---------------------------------------------------------------------------
+
+func TestRuntimeTerminalChargeBindingCompletedSettlesReservedSessionIdempotently(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	job := &models.RuntimeJob{
+		ID:             "runtime-charge-complete",
+		ProductCode:    "ecommerce",
+		TaskType:       "image_generation",
+		Status:         "processing",
+		SourceType:     "ecommerce_job",
+		SourceID:       "job-charge-complete",
+		OrganizationID: "org-1",
+	}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	session, err := service.CreateChargeSession(CreateChargeSessionInput{SourceType: job.SourceType, SourceID: job.SourceID, ProductCode: job.ProductCode, OrganizationID: job.OrganizationID, BillingSubjectType: "organization", BillingSubjectID: job.OrganizationID, BillableItemCode: "IMAGE_GENERATION", ResourceType: "image_generation"})
+	if err != nil {
+		t.Fatalf("CreateChargeSession: %v", err)
+	}
+	if _, err := service.UpdateChargeSession(session.ID, UpdateChargeSessionInput{Status: "reserved", ReservationID: "reservation-complete"}); err != nil {
+		t.Fatalf("reserve charge session: %v", err)
+	}
+	job.ChargeSessionID = session.ID
+	if err := repo.SaveRuntimeJob(job); err != nil {
+		t.Fatalf("attach charge session: %v", err)
+	}
+
+	updated, err := service.UpdateRuntimeJob(job.ID, UpdateRuntimeJobInput{Status: "completed", Stage: "completed", StageMessage: "done"})
+	if err != nil {
+		t.Fatalf("complete runtime job: %v", err)
+	}
+	if updated.CompletedAt == nil {
+		t.Fatalf("expected completed_at set: %+v", updated)
+	}
+	charged, err := service.GetChargeSession(session.ID)
+	if err != nil {
+		t.Fatalf("load charge session: %v", err)
+	}
+	if charged.Status != "settled" || charged.FinalizedAt == nil || charged.FinalUnits != charged.EstimatedUnits || charged.SettlementID == "" {
+		t.Fatalf("expected settled charge session, got %+v", charged)
+	}
+	firstSettlementID := charged.SettlementID
+
+	if _, err := service.UpdateRuntimeJob(job.ID, UpdateRuntimeJobInput{Status: "completed", Stage: "completed"}); err != nil {
+		t.Fatalf("repeat complete runtime job should be idempotent: %v", err)
+	}
+	chargedAgain, err := service.GetChargeSession(session.ID)
+	if err != nil {
+		t.Fatalf("reload charge session: %v", err)
+	}
+	if chargedAgain.Status != "settled" || chargedAgain.SettlementID != firstSettlementID {
+		t.Fatalf("expected idempotent settled charge session, got %+v", chargedAgain)
+	}
+}
+
+func TestRuntimeTerminalChargeBindingFailedReleasesReservedSession(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	job := &models.RuntimeJob{ID: "runtime-charge-fail", ProductCode: "ecommerce", TaskType: "image_generation", Status: "processing", SourceType: "ecommerce_job", SourceID: "job-charge-fail", OrganizationID: "org-1"}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	session, err := service.CreateChargeSession(CreateChargeSessionInput{SourceType: job.SourceType, SourceID: job.SourceID, ProductCode: job.ProductCode, OrganizationID: job.OrganizationID, BillingSubjectType: "organization", BillingSubjectID: job.OrganizationID, BillableItemCode: "IMAGE_GENERATION", ResourceType: "image_generation"})
+	if err != nil {
+		t.Fatalf("CreateChargeSession: %v", err)
+	}
+	if _, err := service.UpdateChargeSession(session.ID, UpdateChargeSessionInput{Status: "reserved", ReservationID: "reservation-fail"}); err != nil {
+		t.Fatalf("reserve charge session: %v", err)
+	}
+	job.ChargeSessionID = session.ID
+	if err := repo.SaveRuntimeJob(job); err != nil {
+		t.Fatalf("attach charge session: %v", err)
+	}
+	if _, err := service.UpdateRuntimeJob(job.ID, UpdateRuntimeJobInput{Status: "failed", Stage: "failed", StageMessage: "provider failed"}); err != nil {
+		t.Fatalf("fail runtime job: %v", err)
+	}
+	charged, err := service.GetChargeSession(session.ID)
+	if err != nil {
+		t.Fatalf("load charge session: %v", err)
+	}
+	if charged.Status != "released" || charged.ReleasedAt == nil {
+		t.Fatalf("expected released charge session, got %+v", charged)
+	}
+}
+
+func TestRuntimeTerminalChargeBindingCanceledCancelsCreatedSession(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	job := &models.RuntimeJob{ID: "runtime-charge-cancel", ProductCode: "ecommerce", TaskType: "image_generation", Status: "queued", SourceType: "ecommerce_job", SourceID: "job-charge-cancel", OrganizationID: "org-1"}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	session, err := service.CreateChargeSession(CreateChargeSessionInput{SourceType: job.SourceType, SourceID: job.SourceID, ProductCode: job.ProductCode, OrganizationID: job.OrganizationID, BillingSubjectType: "organization", BillingSubjectID: job.OrganizationID, BillableItemCode: "IMAGE_GENERATION", ResourceType: "image_generation"})
+	if err != nil {
+		t.Fatalf("CreateChargeSession: %v", err)
+	}
+	job.ChargeSessionID = session.ID
+	if err := repo.SaveRuntimeJob(job); err != nil {
+		t.Fatalf("attach charge session: %v", err)
+	}
+	if _, err := service.CancelRuntimeJob(job.ID); err != nil {
+		t.Fatalf("cancel runtime job: %v", err)
+	}
+	charged, err := service.GetChargeSession(session.ID)
+	if err != nil {
+		t.Fatalf("load charge session: %v", err)
+	}
+	if charged.Status != "canceled" {
+		t.Fatalf("expected canceled charge session, got %+v", charged)
+	}
+}
+
+func TestRuntimeTerminalChargeBindingRejectsBoundaryMismatchAndRollsBackJob(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	job := &models.RuntimeJob{ID: "runtime-charge-mismatch", ProductCode: "ecommerce", TaskType: "image_generation", Status: "processing", SourceType: "ecommerce_job", SourceID: "job-charge-mismatch", OrganizationID: "org-1"}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	session, err := service.CreateChargeSession(CreateChargeSessionInput{
+		SourceType:         "runtime_job",
+		SourceID:           job.ID,
+		ProductCode:        "other-product",
+		OrganizationID:     "org-2",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-2",
+		BillableItemCode:   "IMAGE_GENERATION",
+		ResourceType:       "image_generation",
+	})
+	if err != nil {
+		t.Fatalf("CreateChargeSession: %v", err)
+	}
+	job.ChargeSessionID = session.ID
+	if err := repo.SaveRuntimeJob(job); err != nil {
+		t.Fatalf("attach charge session: %v", err)
+	}
+	if _, err := service.UpdateRuntimeJob(job.ID, UpdateRuntimeJobInput{Status: "completed", Stage: "completed"}); err == nil {
+		t.Fatalf("expected boundary mismatch error")
+	}
+	reloaded, err := repo.FindRuntimeJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("reload runtime job: %v", err)
+	}
+	if reloaded.Status != "processing" || reloaded.CompletedAt != nil {
+		t.Fatalf("expected terminal job update rollback after charge mismatch, got %+v", reloaded)
+	}
+	charged, err := service.GetChargeSession(session.ID)
+	if err != nil {
+		t.Fatalf("reload charge session: %v", err)
+	}
+	if charged.Status != "created" {
+		t.Fatalf("expected charge session unchanged, got %+v", charged)
+	}
+}
+
+func TestRuntimeTerminalChargeBindingRejectsSourceTypeMismatch(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	job := &models.RuntimeJob{ID: "runtime-charge-source-type", ProductCode: "ecommerce", TaskType: "image_generation", Status: "processing", SourceType: "ecommerce_job", SourceID: "shared-source-id", OrganizationID: "org-1"}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	session, err := service.CreateChargeSession(CreateChargeSessionInput{
+		SourceType:         "other_source_namespace",
+		SourceID:           job.SourceID,
+		ProductCode:        job.ProductCode,
+		OrganizationID:     job.OrganizationID,
+		BillingSubjectType: "organization",
+		BillingSubjectID:   job.OrganizationID,
+		BillableItemCode:   "IMAGE_GENERATION",
+		ResourceType:       "image_generation",
+	})
+	if err != nil {
+		t.Fatalf("CreateChargeSession: %v", err)
+	}
+	job.ChargeSessionID = session.ID
+	if err := repo.SaveRuntimeJob(job); err != nil {
+		t.Fatalf("attach charge session: %v", err)
+	}
+	if _, err := service.UpdateRuntimeJob(job.ID, UpdateRuntimeJobInput{Status: "completed", Stage: "completed"}); err == nil {
+		t.Fatalf("expected source type mismatch error")
+	}
+	reloaded, err := repo.FindRuntimeJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("reload runtime job: %v", err)
+	}
+	if reloaded.Status != "processing" {
+		t.Fatalf("expected rollback to processing, got %+v", reloaded)
+	}
+	charged, err := service.GetChargeSession(session.ID)
+	if err != nil {
+		t.Fatalf("reload charge session: %v", err)
+	}
+	if charged.Status != "created" {
+		t.Fatalf("expected charge session unchanged, got %+v", charged)
+	}
+}
+
+func TestRuntimeTerminalChargeBindingNoChargeSessionNoop(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	job := &models.RuntimeJob{ID: "runtime-charge-none", ProductCode: "ecommerce", TaskType: "image_generation", Status: "processing", SourceType: "ecommerce_job", SourceID: "job-charge-none", OrganizationID: "org-1"}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	if _, err := service.UpdateRuntimeJob(job.ID, UpdateRuntimeJobInput{Status: "completed", Stage: "completed"}); err != nil {
+		t.Fatalf("complete runtime job without charge session should not error: %v", err)
+	}
+}
 
 func createTestChargeSession(t *testing.T, service *Service, suffix string) *models.ChargeSession {
 	t.Helper()
@@ -473,6 +680,65 @@ func TestChargeSessionStateMachine_SameStatusNoop(t *testing.T) {
 	}
 	if updated.Status != "created" {
 		t.Fatalf("expected status created, got %s", updated.Status)
+	}
+}
+
+func TestSanitizeProviderCallbackMetadataRecursesTypedCollections(t *testing.T) {
+	metadata := map[string]any{
+		"safe":    "ok",
+		"outputs": []map[string]any{{"label": "hero", "api_key": "secret", "nested": map[string]string{"token": "hidden", "caption": "front"}}},
+		"billing": map[string]any{"charge_session_id": "cs_1"},
+	}
+	sanitized := sanitizeProviderCallbackMetadata(metadata)
+	body, _ := json.Marshal(sanitized)
+	text := string(body)
+	if strings.Contains(text, "secret") || strings.Contains(text, "hidden") || strings.Contains(text, "charge_session_id") || strings.Contains(text, "billing") || strings.Contains(text, "api_key") || strings.Contains(text, "token") {
+		t.Fatalf("metadata sanitizer leaked sensitive nested fields: %s", text)
+	}
+	if !strings.Contains(text, "hero") || !strings.Contains(text, "front") || sanitized["safe"] != "ok" {
+		t.Fatalf("metadata sanitizer dropped safe nested fields: %s", text)
+	}
+}
+
+func TestHandleProviderCallbackPayloadNormalizesOutputManifestAndRegistersStorage(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	service.UseAssetStorage(assetstorage.NewService(repo))
+	baseDir := t.TempDir()
+	if err := repo.CreateStorageBinding(&models.StorageBinding{ID: "storage-runtime-output", ProductCode: "ecommerce", Category: "runtime-assets", ProviderCode: "local", LocalBaseDir: baseDir, Enabled: true, Priority: 1}); err != nil {
+		t.Fatalf("CreateStorageBinding: %v", err)
+	}
+	job := &models.RuntimeJob{ID: "runtime-callback-output", ProductCode: "ecommerce", TaskType: "image_generation", ProviderCode: "comfyui_bridge", ProviderMode: "async", OrganizationID: "org-1", UserID: "user-1", Status: "processing", Stage: "provider_running", SourceType: "visual_generation", SourceID: "version-1", InputManifest: `{"input_mode":"prompt_snapshot"}`}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	expiresAt := time.Now().Add(time.Minute).Unix()
+	validSig := buildProviderCallbackSignature(runtimeSecurityForTest().EncryptionKey, job.ID, expiresAt)
+	err := service.HandleProviderCallbackPayload("comfyui", job.ID, expiresAt, validSig, &NormalizedProviderCallbackPayload{
+		Status:       "completed",
+		Progress:     100,
+		StageMessage: "done",
+		Variants:     []ProviderResultVariant{{Index: 0, InlineData: "iVBORw0KGgo=", MimeType: "image/png", Metadata: map[string]any{"secret": "drop"}}},
+		Metadata:     map[string]any{"provider_trace_id": "trace-1", "api_key": "drop"},
+	})
+	if err != nil {
+		t.Fatalf("HandleProviderCallbackPayload: %v", err)
+	}
+	updated, err := repo.FindRuntimeJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("FindRuntimeJobByID: %v", err)
+	}
+	var manifest RuntimeOutputManifest
+	if err := json.Unmarshal([]byte(updated.OutputManifest), &manifest); err != nil {
+		t.Fatalf("output manifest json: %v raw=%s", err, updated.OutputManifest)
+	}
+	if manifest.Contract != "platform.runtime.output.v1" || len(manifest.Variants) != 1 || manifest.Variants[0].Asset.StorageKey == "" {
+		t.Fatalf("unexpected output manifest: %+v", manifest)
+	}
+	if _, ok := manifest.ProviderMeta["api_key"]; ok {
+		t.Fatalf("provider internals leaked in manifest: %+v", manifest.ProviderMeta)
+	}
+	if _, err := repo.FindStorageAssetBySource("ecommerce", "runtime-assets", "runtime_output", job.ID+":0"); err != nil {
+		t.Fatalf("expected storage registry asset: %v", err)
 	}
 }
 

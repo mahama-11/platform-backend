@@ -17,6 +17,7 @@
 - `incentives/channel-*`
 - `incentives/channel-settlement-*`
 - `commercial/route/resolve`
+- `runtime/capabilities`
 
 ## 生成 internal OpenAPI
 

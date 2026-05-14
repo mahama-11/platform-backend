@@ -90,10 +90,10 @@ func TestResolveProviderCodeAndProviderCallbackURL(t *testing.T) {
 		t.Fatalf("CreateProviderBinding: %v", err)
 	}
 	job := &models.RuntimeJob{
-		ID:           "job-route",
-		ProductCode:  "ecommerce",
-		TaskType:     "image_generation",
-		RouteSnapshot:`{"objective":"quality"}`,
+		ID:            "job-route",
+		ProductCode:   "ecommerce",
+		TaskType:      "image_generation",
+		RouteSnapshot: `{"objective":"quality"}`,
 	}
 	providerCode, err := service.resolveProviderCode(job)
 	if err != nil || providerCode != "comfyui_bridge" {

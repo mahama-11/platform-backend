@@ -335,6 +335,7 @@ func New(
 		internal.GET("/metering/discounts", meteringHandler.ListDiscounts)
 		internal.POST("/runtime/providers", runtimeHandler.CreateProviderDefinition)
 		internal.GET("/runtime/providers", runtimeHandler.ListProviderDefinitions)
+		internal.GET("/runtime/capabilities", runtimeHandler.ListRuntimeCapabilities)
 		internal.POST("/runtime/jobs", runtimeHandler.CreateRuntimeJob)
 		internal.GET("/runtime/jobs/:runtimeJobID", runtimeHandler.GetRuntimeJob)
 		internal.PUT("/runtime/jobs/:runtimeJobID", runtimeHandler.UpdateRuntimeJob)

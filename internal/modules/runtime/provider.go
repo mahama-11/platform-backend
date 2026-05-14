@@ -68,6 +68,56 @@ type ProviderCompletion struct {
 	Metadata     map[string]any          `json:"metadata"`
 }
 
+type NormalizedProviderCallbackPayload struct {
+	ProviderCode  string                  `json:"provider_code"`
+	ProviderJobID string                  `json:"provider_job_id,omitempty"`
+	Status        string                  `json:"status"`
+	Stage         string                  `json:"stage,omitempty"`
+	StageMessage  string                  `json:"stage_message,omitempty"`
+	Progress      int                     `json:"progress"`
+	ErrorClass    string                  `json:"error_class,omitempty"`
+	ErrorCode     string                  `json:"error_code,omitempty"`
+	ErrorMessage  string                  `json:"error_message,omitempty"`
+	Completion    *ProviderCompletion     `json:"completion,omitempty"`
+	Variants      []ProviderResultVariant `json:"variants,omitempty"`
+	Metadata      map[string]any          `json:"metadata,omitempty"`
+}
+
+type RuntimeOutputAssetManifest struct {
+	AssetType      string         `json:"asset_type"`
+	SourceType     string         `json:"source_type"`
+	StorageKey     string         `json:"storage_key,omitempty"`
+	StorageAssetID string         `json:"storage_asset_id,omitempty"`
+	SourceURL      string         `json:"source_url,omitempty"`
+	PreviewURL     string         `json:"preview_url,omitempty"`
+	MimeType       string         `json:"mime_type,omitempty"`
+	FileSize       int64          `json:"file_size,omitempty"`
+	Width          int            `json:"width,omitempty"`
+	Height         int            `json:"height,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+}
+
+type RuntimeOutputVariantManifest struct {
+	Index      int                        `json:"index"`
+	Status     string                     `json:"status"`
+	IsSelected bool                       `json:"is_selected,omitempty"`
+	Asset      RuntimeOutputAssetManifest `json:"asset"`
+}
+
+type RuntimeOutputManifest struct {
+	Contract     string                         `json:"contract"`
+	RuntimeJobID string                         `json:"runtime_job_id"`
+	ProductCode  string                         `json:"product_code"`
+	TaskType     string                         `json:"task_type"`
+	ProviderCode string                         `json:"provider_code"`
+	Status       string                         `json:"status"`
+	Progress     int                            `json:"progress"`
+	StageMessage string                         `json:"stage_message,omitempty"`
+	Storage      map[string]any                 `json:"storage,omitempty"`
+	Variants     []RuntimeOutputVariantManifest `json:"variants"`
+	ProviderMeta map[string]any                 `json:"provider_metadata,omitempty"`
+}
+
 type ProviderSubmission struct {
 	ProviderJobID string              `json:"provider_job_id"`
 	Stage         string              `json:"stage"`
