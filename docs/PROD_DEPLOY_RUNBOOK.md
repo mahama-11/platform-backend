@@ -35,6 +35,8 @@ Read-only prod drift gate:
 ./tools/prod/platform-drift-check.sh --env prod --fail-on-critical
 ```
 
+This gate also verifies prod runtime queue isolation. Prod must use `runtime.queue_name: runtime:prod`; otherwise dev and prod Platform workers can compete for the same Asynq queue and create intermittent `PROVIDER_NOT_FOUND` / stale-worker execution failures.
+
 Callback secret alignment / rotation:
 
 ```bash
@@ -124,4 +126,5 @@ Follow-up gate:
 ## Known warnings
 
 - Minimax may be configured and bound but still unavailable due account/quota limits. Treat as WARN unless default routing depends on it.
+- Prod Platform runtime queue must remain `runtime:prod`. A missing/default queue can let dev and prod workers consume the same runtime jobs; fix prod config and restart Platform before trusting smoke results.
 - Dev containers may run next to prod containers; this is allowed only if prod DB endpoints point to prod container URLs.
