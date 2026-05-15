@@ -36,6 +36,7 @@ It must not absorb product-specific workflows from KYC, Attendance, or Menu AI.
 - [**Backend Guide**](docs/BACKEND_GUIDE.md): Entry guide for platform service development.
 - [**Internal API Contract**](docs/INTERNAL_API_CONTRACT.md): Internal service access contract, response envelope, idempotency, and retry guidance.
 - [**OpenAPI README**](docs/openapi/README.md): Internal Swagger/OpenAPI generation entry and current coverage scope.
+- [**Prod Deploy Runbook**](docs/PROD_DEPLOY_RUNBOOK.md): Production deploy, drift-check, runtime smoke, and evidence automation.
 - [**Service Boundary**](docs/architecture/SERVICE_BOUNDARY.md): What belongs here and what does not.
 - [**Runtime Product Callback Abstraction**](docs/architecture/RUNTIME_PRODUCT_CALLBACK_ABSTRACTION.md): How platform runtime delivers normalized status/result callbacks to multiple product backends without Menu-specific final-hop coupling.
 - [**Runtime Configuration Reference**](docs/architecture/RUNTIME_CONFIGURATION_REFERENCE.md): Supported runtime config values, callback kinds, provider codes, metadata keys, and local ComfyUI Bridge setup guidance.
