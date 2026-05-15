@@ -8,6 +8,7 @@ This guide defines the current scope and engineering baseline of `v-platform-bac
 
 - [INTERNAL_API_CONTRACT.md](INTERNAL_API_CONTRACT.md): 平台内部服务接入契约、统一响应、错误处理与重试建议
 - [openapi/README.md](openapi/README.md): internal API 的 Swagger/OpenAPI 生成入口与当前覆盖范围
+- [PROD_DEPLOY_RUNBOOK.md](PROD_DEPLOY_RUNBOOK.md): Platform prod deploy、drift check、runtime smoke 与证据自动化流程
 - [COMMERCIALIZATION_BOUNDARY.md](architecture/COMMERCIALIZATION_BOUNDARY.md): 平台商业化边界、实施顺序、工程化基线
 - [COMMERCIALIZATION_FULL_VIEW_AND_PHASES.md](architecture/COMMERCIALIZATION_FULL_VIEW_AND_PHASES.md): 商业化全面视角、P0/P1/P2 分期与扩展预留
 - [COMMERCIAL_CATALOG_MODEL.md](architecture/COMMERCIAL_CATALOG_MODEL.md): 商品、SKU、套餐、计费项、价格模型设计
