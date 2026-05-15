@@ -71,9 +71,15 @@ try:
     ecfg=yaml.safe_load(open(__import__('os').environ.get('ECOMMERCE_CONFIG_PATH','/root/gk/ecommerce-backend/config.prod.yaml')))
 except Exception:
     ecfg={}
-ecom_secret=((ecfg.get('security') or {}).get('internal_service_secret') or (ecfg.get('platform') or {}).get('internal_service_secret') or '')
-print('ECOM_SECRET_EMPTY=%s' % (not bool(ecom_secret)))
-print('ECOM_SECRET_HASH=%s' % (hashlib.sha256(ecom_secret.encode()).hexdigest()[:12] if ecom_secret else ''))
+platform_internal=((pcfg.get('security') or {}).get('internal_service_secret') or '')
+ecom_callback_secret=((ecfg.get('security') or {}).get('service_secret_key') or '')
+ecom_platform_secret=((ecfg.get('platform') or {}).get('internal_service_secret') or '')
+print('PLATFORM_INTERNAL_HASH=%s' % (hashlib.sha256(platform_internal.encode()).hexdigest()[:12] if platform_internal else ''))
+print('PLATFORM_INTERNAL_PLACEHOLDER=%s' % bool(__import__('re').search(r'(change-me|changeme|placeholder|example-secret|your-secret)', platform_internal or '', __import__('re').I)))
+print('ECOM_SECRET_EMPTY=%s' % (not bool(ecom_callback_secret)))
+print('ECOM_SECRET_PLACEHOLDER=%s' % bool(__import__('re').search(r'(change-me|changeme|placeholder|example-secret|your-secret)', ecom_callback_secret or '', __import__('re').I)))
+print('ECOM_SECRET_HASH=%s' % (hashlib.sha256(ecom_callback_secret.encode()).hexdigest()[:12] if ecom_callback_secret else ''))
+print('ECOM_PLATFORM_SECRET_HASH=%s' % (hashlib.sha256(ecom_platform_secret.encode()).hexdigest()[:12] if ecom_platform_secret else ''))
 PY
 # shellcheck disable=SC1091
 source /tmp/platform_drift_env.sh
@@ -116,9 +122,15 @@ while IFS='|' read -r kind a b c d e f; do
       fi
       [ "$status" = "active" ] && pass "endpoint product=$product active" || crit "endpoint product=$product status=$status"
       [ "$secret_empty" = "false" ] && pass "endpoint product=$product secret_non_empty=true" || crit "endpoint product=$product secret_empty=true"
-      [ "$secret_placeholder" = "false" ] && pass "endpoint product=$product secret_placeholder=false" || crit "endpoint product=$product secret_placeholder=true"
-      if [ "$product" = "ecommerce" ] && [ "${ECOM_SECRET_EMPTY:-True}" = "False" ]; then
-        [ "$hash" = "${ECOM_SECRET_HASH:-}" ] && pass "endpoint product=ecommerce secret_hash_matches_backend=true hash_prefix=$hash" || crit "endpoint product=ecommerce secret_hash_matches_backend=false endpoint_hash=$hash backend_hash=${ECOM_SECRET_HASH:-}"
+      [ "$secret_placeholder" = "false" ] && pass "endpoint product=$product endpoint_secret_placeholder=false" || crit "endpoint product=$product endpoint_secret_placeholder=true"
+      if [ "$product" = "ecommerce" ]; then
+        [ "${ECOM_SECRET_EMPTY:-True}" = "False" ] && pass "ecommerce callback_secret_non_empty=true" || crit "ecommerce callback_secret_empty=true"
+        [ "${ECOM_SECRET_PLACEHOLDER:-True}" = "False" ] && pass "ecommerce callback_secret_placeholder=false" || crit "ecommerce callback_secret_placeholder=true"
+        [ "${ECOM_PLATFORM_SECRET_HASH:-}" = "${PLATFORM_INTERNAL_HASH:-}" ] && pass "ecommerce outbound_platform_secret_matches_platform=true hash_prefix=${ECOM_PLATFORM_SECRET_HASH:-}" || crit "ecommerce outbound_platform_secret_matches_platform=false ecommerce_hash=${ECOM_PLATFORM_SECRET_HASH:-} platform_hash=${PLATFORM_INTERNAL_HASH:-}"
+        [ "${PLATFORM_INTERNAL_PLACEHOLDER:-True}" = "False" ] && pass "platform internal_secret_placeholder=false" || warn "platform internal_secret_placeholder=true follow_up=rotate_platform_internal_secret"
+        if [ "${ECOM_SECRET_EMPTY:-True}" = "False" ]; then
+          [ "$hash" = "${ECOM_SECRET_HASH:-}" ] && pass "endpoint product=ecommerce callback_secret_hash_matches_backend=true hash_prefix=$hash" || crit "endpoint product=ecommerce callback_secret_hash_matches_backend=false endpoint_hash=$hash backend_hash=${ECOM_SECRET_HASH:-}"
+        fi
       fi
       ;;
     binding)
