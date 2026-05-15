@@ -807,7 +807,7 @@ func (s *Service) notifyProductResults(job *models.RuntimeJob, input ProductReco
 
 func (s *Service) enqueueCallbackDelivery(job *models.RuntimeJob, callbackType string, payload any) error {
 	if s.callbackClientForJob(job) == nil {
-		return nil
+		return fmt.Errorf("product callback endpoint missing for product_code=%s", job.ProductCode)
 	}
 	body, _ := json.Marshal(payload)
 	delivery := &models.RuntimeCallbackDelivery{

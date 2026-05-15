@@ -121,6 +121,10 @@ func (r *RuntimeRepository) CreateStorageBinding(item *models.StorageBinding) er
 	return r.db.Create(item).Error
 }
 
+func (r *RuntimeRepository) SaveStorageBinding(item *models.StorageBinding) error {
+	return r.db.Save(item).Error
+}
+
 func (r *RuntimeRepository) FindStorageAssetByStorageKey(storageKey string) (*models.StorageAsset, error) {
 	var item models.StorageAsset
 	if err := r.db.Where("storage_key = ?", storageKey).First(&item).Error; err != nil {

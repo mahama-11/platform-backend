@@ -47,6 +47,8 @@ type RuntimeConfig struct {
 }
 
 type BootstrapConfig struct {
+	SyncEnabled bool `mapstructure:"sync_enabled"`
+
 	Identity   IdentityBootstrapConfig   `mapstructure:"identity"`
 	Commercial CommercialBootstrapConfig `mapstructure:"commercial"`
 	Runtime    RuntimeBootstrapConfig    `mapstructure:"runtime"`
@@ -77,8 +79,9 @@ type CommercialBootstrapConfig struct {
 }
 
 type RuntimeBootstrapConfig struct {
-	ProductEndpoints []BootstrapRuntimeProductEndpoint `mapstructure:"product_endpoints"`
-	ProviderBindings []BootstrapRuntimeProviderBinding `mapstructure:"provider_bindings"`
+	ProviderDefinitions []BootstrapRuntimeProviderDefinition `mapstructure:"provider_definitions"`
+	ProductEndpoints    []BootstrapRuntimeProductEndpoint    `mapstructure:"product_endpoints"`
+	ProviderBindings    []BootstrapRuntimeProviderBinding    `mapstructure:"provider_bindings"`
 }
 
 type StorageBootstrapConfig struct {
@@ -125,6 +128,17 @@ type BootstrapBillableItem struct {
 	PricingBehavior string `mapstructure:"pricing_behavior"`
 	Status          string `mapstructure:"status"`
 	Metadata        string `mapstructure:"metadata"`
+}
+
+type BootstrapRuntimeProviderDefinition struct {
+	Code          string `mapstructure:"code"`
+	Name          string `mapstructure:"name"`
+	ProviderType  string `mapstructure:"provider_type"`
+	Mode          string `mapstructure:"mode"`
+	CredentialRef string `mapstructure:"credential_ref"`
+	Capabilities  string `mapstructure:"capabilities"`
+	Status        string `mapstructure:"status"`
+	Metadata      string `mapstructure:"metadata"`
 }
 
 type BootstrapRuntimeProductEndpoint struct {
@@ -350,6 +364,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("log_level", "info")
 	v.SetDefault("use_mock", false)
 	v.SetDefault("app.frontend_base_url", "http://localhost:3000")
+	v.SetDefault("bootstrap.sync_enabled", false)
 	v.SetDefault("bootstrap.identity.dev_seed_enabled", false)
 	v.SetDefault("bootstrap.identity.force_rotate_password", false)
 	v.SetDefault("bootstrap.identity.force_admin_state", false)

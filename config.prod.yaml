@@ -8,6 +8,9 @@ app:
   frontend_base_url: "https://open.verilocale.com"
 
 bootstrap:
+  # Sync config-managed runtime/commercial/storage bootstrap rows on prod
+  # without enabling schema AutoMigrate.
+  sync_enabled: true
   commercial:
     products:
       - code: "menu"
