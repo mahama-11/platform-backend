@@ -37,23 +37,49 @@ func InitDB(appCfg *config.Config) (*gorm.DB, error) {
 		if err := RunSchemaBootstrap(db); err != nil {
 			return nil, err
 		}
-		if err := access.SeedDefaults(db); err != nil {
-			return nil, fmt.Errorf("seed access defaults: %w", err)
+	}
+	if cfg.AutoMigrateEnabled {
+		if err := RunAutoMigrateBootstrap(db, appCfg); err != nil {
+			return nil, err
 		}
-		if err := commercial.SeedLocalDefaults(db, appCfg); err != nil {
-			return nil, fmt.Errorf("seed commercial defaults: %w", err)
-		}
-		if err := runtime.SeedLocalDefaults(db, appCfg); err != nil {
-			return nil, fmt.Errorf("seed runtime defaults: %w", err)
-		}
-		if err := assetstorage.SeedLocalDefaults(db, appCfg); err != nil {
-			return nil, fmt.Errorf("seed storage defaults: %w", err)
-		}
-		if err := devseed.SeedLocalDefaults(db, appCfg); err != nil {
-			return nil, fmt.Errorf("seed dev identity defaults: %w", err)
+	} else if appCfg.Bootstrap.SyncEnabled {
+		if err := RunConfigSyncBootstrap(db, appCfg); err != nil {
+			return nil, err
 		}
 	}
 	return db, nil
+}
+
+func RunAutoMigrateBootstrap(db *gorm.DB, appCfg *config.Config) error {
+	if err := access.SeedDefaults(db); err != nil {
+		return fmt.Errorf("seed access defaults: %w", err)
+	}
+	if err := commercial.SeedLocalDefaults(db, appCfg); err != nil {
+		return fmt.Errorf("seed commercial defaults: %w", err)
+	}
+	if err := runtime.SeedLocalDefaults(db, appCfg); err != nil {
+		return fmt.Errorf("seed runtime defaults: %w", err)
+	}
+	if err := assetstorage.SeedLocalDefaults(db, appCfg); err != nil {
+		return fmt.Errorf("seed storage defaults: %w", err)
+	}
+	if err := devseed.SeedLocalDefaults(db, appCfg); err != nil {
+		return fmt.Errorf("seed dev identity defaults: %w", err)
+	}
+	return nil
+}
+
+func RunConfigSyncBootstrap(db *gorm.DB, appCfg *config.Config) error {
+	if err := commercial.SeedLocalDefaults(db, appCfg); err != nil {
+		return fmt.Errorf("sync commercial defaults: %w", err)
+	}
+	if err := runtime.SeedLocalDefaults(db, appCfg); err != nil {
+		return fmt.Errorf("sync runtime defaults: %w", err)
+	}
+	if err := assetstorage.SeedLocalDefaults(db, appCfg); err != nil {
+		return fmt.Errorf("sync storage defaults: %w", err)
+	}
+	return nil
 }
 
 func ConnectDB(cfg config.DatabaseConfig) (*gorm.DB, error) {

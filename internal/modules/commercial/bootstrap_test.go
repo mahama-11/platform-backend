@@ -95,3 +95,42 @@ func TestSeedEcommerceVisibleBaselineIdempotent(t *testing.T) {
 		}
 	}
 }
+
+func TestSeedLocalDefaultsConvergesBillableItemProductID(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Product{}, &models.CommercialEntity{}, &models.BillingProfile{}, &models.BillableItem{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Commercial: config.CommercialBootstrapConfig{
+		Products:      []config.BootstrapProduct{{Code: "ecommerce", Name: "Agent Ecommerce"}},
+		BillableItems: []config.BootstrapBillableItem{{Code: "ecommerce_runtime_text_reasoning", ProductCode: "ecommerce", Name: "Text Reasoning"}},
+	}}}
+	if err := SeedLocalDefaults(db, cfg); err != nil {
+		t.Fatalf("SeedLocalDefaults: %v", err)
+	}
+	var product models.Product
+	if err := db.Where("code = ?", "ecommerce").First(&product).Error; err != nil {
+		t.Fatalf("load product: %v", err)
+	}
+	var item models.BillableItem
+	if err := db.Where("code = ?", "ecommerce_runtime_text_reasoning").First(&item).Error; err != nil {
+		t.Fatalf("load billable item: %v", err)
+	}
+	if item.ProductID != product.ID {
+		t.Fatalf("billable item ProductID should use product ID %s, got %s", product.ID, item.ProductID)
+	}
+
+	cfg.Bootstrap.Commercial.BillableItems[0].Name = "Text Reasoning Updated"
+	if err := SeedLocalDefaults(db, cfg); err != nil {
+		t.Fatalf("SeedLocalDefaults update: %v", err)
+	}
+	if err := db.Where("code = ?", "ecommerce_runtime_text_reasoning").First(&item).Error; err != nil {
+		t.Fatalf("reload billable item: %v", err)
+	}
+	if item.Name != "Text Reasoning Updated" {
+		t.Fatalf("billable item did not converge name, got %s", item.Name)
+	}
+}

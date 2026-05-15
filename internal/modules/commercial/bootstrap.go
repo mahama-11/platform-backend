@@ -55,6 +55,27 @@ func SeedLocalDefaults(db *gorm.DB, cfg *config.Config) error {
 func ensureProduct(repo *repository.CommercialRepository, input config.BootstrapProduct) (*models.Product, error) {
 	var item models.Product
 	if err := repo.DB().Where("code = ?", input.Code).First(&item).Error; err == nil {
+		changed := false
+		if item.Name != input.Name && input.Name != "" {
+			item.Name = input.Name
+			changed = true
+		}
+		if item.Status != defaultString(input.Status, platformconst.StatusActive) {
+			item.Status = defaultString(input.Status, platformconst.StatusActive)
+			changed = true
+		}
+		if item.OwnerTeam != defaultString(input.OwnerTeam, "platform") {
+			item.OwnerTeam = defaultString(input.OwnerTeam, "platform")
+			changed = true
+		}
+		if item.Metadata != defaultString(input.Metadata, "{}") {
+			item.Metadata = defaultString(input.Metadata, "{}")
+			changed = true
+		}
+		if changed {
+			item.UpdatedAt = time.Now()
+			return &item, repo.SaveProduct(&item)
+		}
 		return &item, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -78,6 +99,35 @@ func ensureProduct(repo *repository.CommercialRepository, input config.Bootstrap
 func ensureCommercialEntity(repo *repository.CommercialRepository, input config.BootstrapCommercialEntity) (*models.CommercialEntity, error) {
 	var item models.CommercialEntity
 	if err := repo.DB().Where("code = ?", input.Code).First(&item).Error; err == nil {
+		changed := false
+		if input.Name != "" && item.Name != input.Name {
+			item.Name = input.Name
+			changed = true
+		}
+		if item.EntityType != defaultString(input.EntityType, "internal") {
+			item.EntityType = defaultString(input.EntityType, "internal")
+			changed = true
+		}
+		if item.CountryCode != defaultString(input.CountryCode, "CN") {
+			item.CountryCode = defaultString(input.CountryCode, "CN")
+			changed = true
+		}
+		if item.Currency != defaultString(input.Currency, "CNY") {
+			item.Currency = defaultString(input.Currency, "CNY")
+			changed = true
+		}
+		if item.Status != defaultString(input.Status, platformconst.StatusActive) {
+			item.Status = defaultString(input.Status, platformconst.StatusActive)
+			changed = true
+		}
+		if item.Metadata != defaultString(input.Metadata, "{}") {
+			item.Metadata = defaultString(input.Metadata, "{}")
+			changed = true
+		}
+		if changed {
+			item.UpdatedAt = time.Now()
+			return &item, repo.SaveCommercialEntity(&item)
+		}
 		return &item, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -101,7 +151,48 @@ func ensureCommercialEntity(repo *repository.CommercialRepository, input config.
 }
 
 func ensureBillingProfile(repo *repository.CommercialRepository, input config.BootstrapBillingProfile, entityID string) (*models.BillingProfile, error) {
+	productID := input.ProductCode
+	if product, err := repo.FindProductByCode(input.ProductCode); err == nil {
+		productID = product.ID
+	}
 	if item, err := repo.FindBillingProfileByCode(input.Code); err == nil {
+		changed := false
+		if item.ProductID != productID {
+			item.ProductID = productID
+			changed = true
+		}
+		if entityID != "" && item.CommercialEntityID != entityID {
+			item.CommercialEntityID = entityID
+			changed = true
+		}
+		if item.RegionScope != defaultString(input.RegionScope, "CN") {
+			item.RegionScope = defaultString(input.RegionScope, "CN")
+			changed = true
+		}
+		if item.Currency != defaultString(input.Currency, "CNY") {
+			item.Currency = defaultString(input.Currency, "CNY")
+			changed = true
+		}
+		if item.PricingStrategy != defaultString(input.PricingStrategy, "standard") {
+			item.PricingStrategy = defaultString(input.PricingStrategy, "standard")
+			changed = true
+		}
+		if item.TaxStrategy != defaultString(input.TaxStrategy, "default") {
+			item.TaxStrategy = defaultString(input.TaxStrategy, "default")
+			changed = true
+		}
+		if item.Status != defaultString(input.Status, platformconst.StatusActive) {
+			item.Status = defaultString(input.Status, platformconst.StatusActive)
+			changed = true
+		}
+		if item.Metadata != defaultString(input.Metadata, "{}") {
+			item.Metadata = defaultString(input.Metadata, "{}")
+			changed = true
+		}
+		if changed {
+			item.UpdatedAt = time.Now()
+			return item, repo.SaveBillingProfile(item)
+		}
 		return item, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
@@ -109,7 +200,7 @@ func ensureBillingProfile(repo *repository.CommercialRepository, input config.Bo
 	item := &models.BillingProfile{
 		ID:                 utils.GenerateID(),
 		Code:               input.Code,
-		ProductID:          input.ProductCode,
+		ProductID:          productID,
 		CommercialEntityID: entityID,
 		RegionScope:        defaultString(input.RegionScope, "CN"),
 		Currency:           defaultString(input.Currency, "CNY"),
@@ -127,14 +218,55 @@ func ensureBillingProfile(repo *repository.CommercialRepository, input config.Bo
 }
 
 func ensureCreditsBillableItem(repo *repository.CommercialRepository, input config.BootstrapBillableItem) (*models.BillableItem, error) {
+	productID := input.ProductCode
+	if product, err := repo.FindProductByCode(input.ProductCode); err == nil {
+		productID = product.ID
+	}
 	if item, err := repo.FindBillableItemByCode(input.Code); err == nil {
+		changed := false
+		if item.ProductID != productID {
+			item.ProductID = productID
+			changed = true
+		}
+		if item.Name != defaultString(input.Name, input.Code) {
+			item.Name = defaultString(input.Name, input.Code)
+			changed = true
+		}
+		if item.MeterUnit != defaultString(input.MeterUnit, "action") {
+			item.MeterUnit = defaultString(input.MeterUnit, "action")
+			changed = true
+		}
+		if item.BillingScope != defaultString(input.BillingScope, platformconst.SubjectTypeOrganization) {
+			item.BillingScope = defaultString(input.BillingScope, platformconst.SubjectTypeOrganization)
+			changed = true
+		}
+		if item.SettlementMode != defaultString(input.SettlementMode, platformconst.SettlementModeCredits) {
+			item.SettlementMode = defaultString(input.SettlementMode, platformconst.SettlementModeCredits)
+			changed = true
+		}
+		if item.PricingBehavior != defaultString(input.PricingBehavior, "standard") {
+			item.PricingBehavior = defaultString(input.PricingBehavior, "standard")
+			changed = true
+		}
+		if item.Status != defaultString(input.Status, platformconst.StatusActive) {
+			item.Status = defaultString(input.Status, platformconst.StatusActive)
+			changed = true
+		}
+		if item.Metadata != defaultString(input.Metadata, "{}") {
+			item.Metadata = defaultString(input.Metadata, "{}")
+			changed = true
+		}
+		if changed {
+			item.UpdatedAt = time.Now()
+			return item, repo.SaveBillableItem(item)
+		}
 		return item, nil
 	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
 	item := &models.BillableItem{
 		ID:              utils.GenerateID(),
-		ProductID:       input.ProductCode,
+		ProductID:       productID,
 		Code:            input.Code,
 		Name:            defaultString(input.Name, input.Code),
 		MeterUnit:       defaultString(input.MeterUnit, "action"),
