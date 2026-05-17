@@ -31,7 +31,7 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 set +e
-remote_cmd "PLATFORM_CONTAINER=$(printf '%q' "${PLATFORM_CONTAINER:-v-platform-backend}") ECOMMERCE_CONTAINER=$(printf '%q' "${ECOMMERCE_CONTAINER:-v-ecommerce-backend}") PLATFORM_CONFIG_PATH=$(printf '%q' "${PLATFORM_CONFIG_PATH:-$REMOTE_DIR/config.prod.yaml}") ECOMMERCE_CONFIG_PATH=$(printf '%q' "${ECOMMERCE_CONFIG_PATH:-/root/gk/ecommerce-backend/config.prod.yaml}") ECOMMERCE_INTERNAL_URL=$(printf '%q' "${ECOMMERCE_INTERNAL_URL:-http://v-ecommerce-backend:8296}") MENU_INTERNAL_URL=$(printf '%q' "${MENU_INTERNAL_URL:-http://v-menu-backend:8096}") DEV_ECOMMERCE_HOST_PORT=$(printf '%q' "${DEV_ECOMMERCE_HOST_PORT:-8396}") DEV_PLATFORM_HOST_PORT=$(printf '%q' "${DEV_PLATFORM_HOST_PORT:-8195}") DB_CONTAINER=$(printf '%q' "${DB_CONTAINER:-kong-database}") DB_USER=$(printf '%q' "${DB_USER:-kong}") DB_NAME=$(printf '%q' "${DB_NAME:-kong}") EXPECTED_TEXT_PROVIDER=$(printf '%q' "${EXPECTED_TEXT_PROVIDER:-kimi_coding_text}") EXPECTED_TEXT_TASKS=$(printf '%q' "${EXPECTED_TEXT_TASKS:-text_reasoning intent_planning prompt_planning strategy_report}") EXPECTED_STORAGE_BINDINGS=$(printf '%q' "${EXPECTED_STORAGE_BINDINGS:-menu:studio-assets ecommerce:ecommerce-assets ecommerce:template-examples}") bash -s" <<'REMOTE' | redact_stream
+remote_cmd "PLATFORM_CONTAINER=$(printf '%q' "${PLATFORM_CONTAINER:-v-platform-backend}") ECOMMERCE_CONTAINER=$(printf '%q' "${ECOMMERCE_CONTAINER:-v-ecommerce-backend}") PLATFORM_CONFIG_PATH=$(printf '%q' "${PLATFORM_CONFIG_PATH:-$REMOTE_DIR/config.prod.yaml}") ECOMMERCE_CONFIG_PATH=$(printf '%q' "${ECOMMERCE_CONFIG_PATH:-/root/gk/ecommerce-backend/config.prod.yaml}") ECOMMERCE_INTERNAL_URL=$(printf '%q' "${ECOMMERCE_INTERNAL_URL:-http://v-ecommerce-backend:8296}") MENU_INTERNAL_URL=$(printf '%q' "${MENU_INTERNAL_URL:-http://v-menu-backend:8096}") DEV_ECOMMERCE_HOST_PORT=$(printf '%q' "${DEV_ECOMMERCE_HOST_PORT:-8396}") DEV_PLATFORM_HOST_PORT=$(printf '%q' "${DEV_PLATFORM_HOST_PORT:-8195}") DB_CONTAINER=$(printf '%q' "${DB_CONTAINER:-kong-database}") DB_USER=$(printf '%q' "${DB_USER:-kong}") DB_NAME=$(printf '%q' "${DB_NAME:-kong}") EXPECTED_TEXT_PROVIDER=$(printf '%q' "${EXPECTED_TEXT_PROVIDER:-kimi_coding_text}") EXPECTED_TEXT_TASKS=$(printf '%q' "${EXPECTED_TEXT_TASKS:-text_reasoning intent_planning prompt_planning strategy_report}") EXPECTED_STORAGE_BINDINGS=$(printf '%q' "${EXPECTED_STORAGE_BINDINGS:-menu:studio-assets ecommerce:ecommerce-assets ecommerce:template-examples}") EXPECTED_RUNTIME_QUEUE_NAME=$(printf '%q' "${PLATFORM_RUNTIME_QUEUE_NAME:-runtime:prod}") bash -s" <<'REMOTE' | redact_stream
 set -euo pipefail
 critical=0
 warns=0
@@ -71,9 +71,17 @@ try:
     ecfg=yaml.safe_load(open(__import__('os').environ.get('ECOMMERCE_CONFIG_PATH','/root/gk/ecommerce-backend/config.prod.yaml')))
 except Exception:
     ecfg={}
-ecom_secret=((ecfg.get('security') or {}).get('internal_service_secret') or (ecfg.get('platform') or {}).get('internal_service_secret') or '')
-print('ECOM_SECRET_EMPTY=%s' % (not bool(ecom_secret)))
-print('ECOM_SECRET_HASH=%s' % (hashlib.sha256(ecom_secret.encode()).hexdigest()[:12] if ecom_secret else ''))
+platform_internal=((pcfg.get('security') or {}).get('internal_service_secret') or '')
+ecom_callback_secret=((ecfg.get('security') or {}).get('service_secret_key') or '')
+ecom_platform_secret=((ecfg.get('platform') or {}).get('internal_service_secret') or '')
+print('PLATFORM_INTERNAL_HASH=%s' % (hashlib.sha256(platform_internal.encode()).hexdigest()[:12] if platform_internal else ''))
+print('PLATFORM_INTERNAL_PLACEHOLDER=%s' % bool(__import__('re').search(r'(change-me|changeme|placeholder|example-secret|your-secret)', platform_internal or '', __import__('re').I)))
+runtime_cfg=pcfg.get('runtime') or {}
+print('ACTUAL_RUNTIME_QUEUE_NAME=%s' % shlex.quote(runtime_cfg.get('queue_name') or ''))
+print('ECOM_SECRET_EMPTY=%s' % (not bool(ecom_callback_secret)))
+print('ECOM_SECRET_PLACEHOLDER=%s' % bool(__import__('re').search(r'(change-me|changeme|placeholder|example-secret|your-secret)', ecom_callback_secret or '', __import__('re').I)))
+print('ECOM_SECRET_HASH=%s' % (hashlib.sha256(ecom_callback_secret.encode()).hexdigest()[:12] if ecom_callback_secret else ''))
+print('ECOM_PLATFORM_SECRET_HASH=%s' % (hashlib.sha256(ecom_platform_secret.encode()).hexdigest()[:12] if ecom_platform_secret else ''))
 PY
 # shellcheck disable=SC1091
 source /tmp/platform_drift_env.sh
@@ -81,6 +89,13 @@ source /tmp/platform_drift_env.sh
 [ "$AUTO_MIGRATE" = "False" ] && pass "config auto_migrate_enabled=false" || crit "config auto_migrate_enabled=$AUTO_MIGRATE expected=False"
 [ "$KIMI_CONFIG_PRESENT" = "True" ] && [ "$KIMI_KEY_PRESENT" = "True" ] && pass "provider_config kimi=configured" || crit "provider_config kimi_missing_or_key_absent"
 [ "$MINIMAX_CONFIG_PRESENT" = "True" ] && [ "$MINIMAX_KEY_PRESENT" = "True" ] && pass "provider_config minimax=configured" || warn "provider_config minimax_missing_or_key_absent"
+expected_queue="${EXPECTED_RUNTIME_QUEUE_NAME:-runtime:prod}"
+actual_queue="${ACTUAL_RUNTIME_QUEUE_NAME:-}"
+if [ -n "${expected_queue:-}" ]; then
+  [ "$actual_queue" = "$expected_queue" ] && pass "platform runtime_queue_name=$actual_queue" || crit "platform runtime_queue_mismatch expected=$expected_queue actual=${actual_queue:-default} risk=prod_dev_worker_collision"
+else
+  [ -n "$actual_queue" ] && pass "platform runtime_queue_name=$actual_queue" || crit "platform runtime_queue_default=true risk=prod_dev_worker_collision"
+fi
 
 cat >/tmp/platform_drift.sql <<'SQL'
 select 'endpoint|' || product_code || '|' || base_url || '|' || status || '|' || (length(coalesce(secret,$q$$q$))=0)::text || '|' || (left(coalesce(secret,$q$$q$),9)=$q$change-me$q$)::text || '|' || left(encode(sha256(coalesce(secret,$q$$q$)::bytea),'hex'),12) from runtime_product_endpoints where product_code in ($q$menu$q$,$q$ecommerce$q$) order by product_code;
@@ -116,9 +131,15 @@ while IFS='|' read -r kind a b c d e f; do
       fi
       [ "$status" = "active" ] && pass "endpoint product=$product active" || crit "endpoint product=$product status=$status"
       [ "$secret_empty" = "false" ] && pass "endpoint product=$product secret_non_empty=true" || crit "endpoint product=$product secret_empty=true"
-      [ "$secret_placeholder" = "false" ] && pass "endpoint product=$product secret_placeholder=false" || crit "endpoint product=$product secret_placeholder=true"
-      if [ "$product" = "ecommerce" ] && [ "${ECOM_SECRET_EMPTY:-True}" = "False" ]; then
-        [ "$hash" = "${ECOM_SECRET_HASH:-}" ] && pass "endpoint product=ecommerce secret_hash_matches_backend=true hash_prefix=$hash" || crit "endpoint product=ecommerce secret_hash_matches_backend=false endpoint_hash=$hash backend_hash=${ECOM_SECRET_HASH:-}"
+      [ "$secret_placeholder" = "false" ] && pass "endpoint product=$product endpoint_secret_placeholder=false" || crit "endpoint product=$product endpoint_secret_placeholder=true"
+      if [ "$product" = "ecommerce" ]; then
+        [ "${ECOM_SECRET_EMPTY:-True}" = "False" ] && pass "ecommerce callback_secret_non_empty=true" || crit "ecommerce callback_secret_empty=true"
+        [ "${ECOM_SECRET_PLACEHOLDER:-True}" = "False" ] && pass "ecommerce callback_secret_placeholder=false" || crit "ecommerce callback_secret_placeholder=true"
+        [ "${ECOM_PLATFORM_SECRET_HASH:-}" = "${PLATFORM_INTERNAL_HASH:-}" ] && pass "ecommerce outbound_platform_secret_matches_platform=true hash_prefix=${ECOM_PLATFORM_SECRET_HASH:-}" || crit "ecommerce outbound_platform_secret_matches_platform=false ecommerce_hash=${ECOM_PLATFORM_SECRET_HASH:-} platform_hash=${PLATFORM_INTERNAL_HASH:-}"
+        [ "${PLATFORM_INTERNAL_PLACEHOLDER:-True}" = "False" ] && pass "platform internal_secret_placeholder=false" || warn "platform internal_secret_placeholder=true follow_up=rotate_platform_internal_secret"
+        if [ "${ECOM_SECRET_EMPTY:-True}" = "False" ]; then
+          [ "$hash" = "${ECOM_SECRET_HASH:-}" ] && pass "endpoint product=ecommerce callback_secret_hash_matches_backend=true hash_prefix=$hash" || crit "endpoint product=ecommerce callback_secret_hash_matches_backend=false endpoint_hash=$hash backend_hash=${ECOM_SECRET_HASH:-}"
+        fi
       fi
       ;;
     binding)

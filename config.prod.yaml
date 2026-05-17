@@ -214,6 +214,7 @@ monitoring:
 
 runtime:
   worker_enabled: true
+  queue_name: "runtime:prod"
   poll_initial_backoff: 2s
   poll_backoff: 5s
   poll_timeout: 5m

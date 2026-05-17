@@ -35,6 +35,21 @@ Read-only prod drift gate:
 ./tools/prod/platform-drift-check.sh --env prod --fail-on-critical
 ```
 
+This gate also verifies prod runtime queue isolation. Prod must use `runtime.queue_name: runtime:prod`; otherwise dev and prod Platform workers can compete for the same Asynq queue and create intermittent `PROVIDER_NOT_FOUND` / stale-worker execution failures.
+
+Callback secret alignment / rotation:
+
+```bash
+# Plan only; no mutation
+./tools/prod/platform-callback-secret-sync.sh --env prod
+
+# Rotate Ecommerce inbound callback secret and align Platform endpoint secret
+./tools/prod/platform-callback-secret-sync.sh --env prod --mode rotate --apply --restart-ecommerce
+
+# Or, if Ecommerce already has the correct real secret, copy it into the Platform endpoint
+./tools/prod/platform-callback-secret-sync.sh --env prod --mode sync-existing --apply --restart-ecommerce
+```
+
 Runtime smoke:
 
 ```bash
@@ -84,7 +99,7 @@ Legacy wrapper remains available:
 - Kimi provider config/key presence;
 - runtime product endpoints do not point to dev containers;
 - endpoint secrets are non-empty and non-placeholder;
-- Ecommerce callback endpoint secret hash matches Ecommerce backend internal secret hash;
+- Ecommerce callback endpoint secret hash matches Ecommerce `security.service_secret_key`;
 - provider definitions/bindings exist for text runtime;
 - storage bindings exist for expected output categories.
 
@@ -98,7 +113,18 @@ Legacy wrapper remains available:
 
 Use explicit Kimi smoke first, then auto-route smoke.
 
+## Callback secret rotation
+
+`platform-callback-secret-sync.sh` is the safe remediation when drift check reports `endpoint product=ecommerce endpoint_secret_placeholder=true`, `ecommerce callback_secret_placeholder=true`, or `callback_secret_hash_matches_backend=false`. It creates a remote config backup, rotates or syncs Ecommerce inbound `security.service_secret_key`, updates `runtime_product_endpoints.ecommerce.secret`, restores Ecommerce outbound `platform.internal_service_secret` from Platform `security.internal_service_secret`, optionally restarts Ecommerce, and prints only booleans/hash prefixes.
+
+Follow-up gate:
+
+```bash
+./tools/prod/platform-drift-check.sh --env prod --fail-on-critical
+```
+
 ## Known warnings
 
 - Minimax may be configured and bound but still unavailable due account/quota limits. Treat as WARN unless default routing depends on it.
+- Prod Platform runtime queue must remain `runtime:prod`. A missing/default queue can let dev and prod workers consume the same runtime jobs; fix prod config and restart Platform before trusting smoke results.
 - Dev containers may run next to prod containers; this is allowed only if prod DB endpoints point to prod container URLs.
