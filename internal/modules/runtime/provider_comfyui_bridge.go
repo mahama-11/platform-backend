@@ -40,11 +40,13 @@ func (p *comfyUIBridgeProvider) Submit(ctx context.Context, req ProviderJobReque
 		return nil, newNonRetryableProviderError("comfyui bridge base url is not configured")
 	}
 	prompt := buildVolcenginePrompt(req)
-	if prompt == "" {
+	if prompt == "" && req.TaskType != "image_understanding" {
 		return nil, newNonRetryableProviderError("prompt is required for comfyui bridge image generation")
 	}
 	params := cloneMap(req.Input.ParamsSnapshot)
-	params["prompt"] = prompt
+	if prompt != "" {
+		params["prompt"] = prompt
+	}
 	if req.CallbackURL != "" {
 		params["callback_url"] = req.CallbackURL
 	}
@@ -52,7 +54,25 @@ func (p *comfyUIBridgeProvider) Submit(ctx context.Context, req ProviderJobReque
 		params["workflow_id"] = workflowID
 	}
 	path := "/generate/text"
-	if len(req.Input.SourceAssets) > 0 || req.Input.InputMode == "image_to_image" {
+	switch {
+	case req.TaskType == "image_understanding":
+		imagePayload, err := p.buildComfyUnderstandingImagePayload(req.Input.SourceAssets)
+		if err != nil {
+			return nil, err
+		}
+		params["image"] = imagePayload
+		if _, ok := params["max_new_tokens"]; !ok {
+			params["max_new_tokens"] = 512
+		}
+		path = "/generate/understand"
+	case req.Input.InputMode == "multi_image":
+		images, err := p.buildComfyMultiImagePayload(req.Input.SourceAssets)
+		if err != nil {
+			return nil, err
+		}
+		params["images"] = images
+		path = "/generate/multi-image"
+	case len(req.Input.SourceAssets) > 0 || req.Input.InputMode == "image_to_image":
 		imagePayload, err := p.buildComfyImagePayload(req.Input.SourceAssets)
 		if err != nil {
 			return nil, err
@@ -103,13 +123,40 @@ func (p *comfyUIBridgeProvider) Poll(ctx context.Context, providerJobID string) 
 				InlineData: dataURL,
 				MimeType:   outputFormatToMimeType(firstNonEmpty(resp.OutputFormat, p.cfg.DefaultOutputFormat), ""),
 				Metadata: map[string]any{
+					"provider":  p.name,
+					"task_id":   providerJobID,
+					"prompt_id": firstNonEmpty(resp.PromptID, resp.Data.PromptID),
+				},
+			})
+		}
+		metadata := map[string]any{
+			"provider": p.name,
+			"task_id":  providerJobID,
+		}
+		if promptID := strings.TrimSpace(firstNonEmpty(resp.PromptID, resp.Data.PromptID)); promptID != "" {
+			metadata["prompt_id"] = promptID
+		}
+		if len(variants) == 0 {
+			resultText := strings.TrimSpace(firstNonEmpty(resp.ResultText, resp.Data.ResultText))
+			if strings.TrimSpace(resultText) == "" {
+				return nil, newRetryableProviderError("comfyui bridge completed without result images")
+			}
+			assetType := "text"
+			mimeType := "text/plain"
+			if json.Valid([]byte(resultText)) {
+				assetType = "json"
+				mimeType = "application/json"
+			}
+			variants = append(variants, ProviderResultVariant{
+				Index:      0,
+				AssetType:  assetType,
+				InlineData: resultText,
+				MimeType:   mimeType,
+				Metadata: map[string]any{
 					"provider": p.name,
 					"task_id":  providerJobID,
 				},
 			})
-		}
-		if len(variants) == 0 {
-			return nil, newRetryableProviderError("comfyui bridge completed without result images")
 		}
 		return &ProviderPollResult{
 			Status:       "completed",
@@ -121,10 +168,7 @@ func (p *comfyUIBridgeProvider) Poll(ctx context.Context, providerJobID string) 
 				Progress:     100,
 				StageMessage: defaultString(resp.Message, "Image generation completed"),
 				Variants:     variants,
-				Metadata: map[string]any{
-					"provider": p.name,
-					"task_id":  providerJobID,
-				},
+				Metadata:     metadata,
 			},
 		}, nil
 	case "failed", "error":
@@ -170,6 +214,41 @@ func (p *comfyUIBridgeProvider) buildComfyImagePayload(assets []ProviderSourceAs
 		}
 	}
 	return "", newNonRetryableProviderError("no usable image payload found for comfyui bridge image generation")
+}
+
+func (p *comfyUIBridgeProvider) buildComfyUnderstandingImagePayload(assets []ProviderSourceAsset) (string, error) {
+	for _, asset := range assets {
+		source := firstNonEmpty(strings.TrimSpace(asset.SourceURL), strings.TrimSpace(asset.PreviewURL))
+		if source == "" {
+			continue
+		}
+		if strings.HasPrefix(source, "data:") {
+			if _, err := extractDataURLPayload(source); err != nil {
+				return "", newNonRetryableProviderError(err.Error())
+			}
+			return normalizeDataURL(source), nil
+		}
+		if isBase64Payload(source) {
+			mimeType := firstNonEmpty(strings.TrimSpace(asset.MimeType), "image/png")
+			return "data:" + mimeType + ";base64," + strings.TrimSpace(source), nil
+		}
+	}
+	return "", newNonRetryableProviderError("no usable image payload found for comfyui bridge image understanding")
+}
+
+func (p *comfyUIBridgeProvider) buildComfyMultiImagePayload(assets []ProviderSourceAsset) ([]string, error) {
+	images := make([]string, 0, len(assets))
+	for _, asset := range assets {
+		payload, err := p.buildComfyImagePayload([]ProviderSourceAsset{asset})
+		if err != nil || payload == "" {
+			continue
+		}
+		images = append(images, payload)
+		if len(images) == 4 {
+			return images, nil
+		}
+	}
+	return nil, newNonRetryableProviderError(fmt.Sprintf("comfyui bridge multi-image generation requires exactly 4 usable images, got %d", len(images)))
 }
 
 func (p *comfyUIBridgeProvider) normalizeResultImage(value string) string {
@@ -289,15 +368,19 @@ type comfyTaskSubmissionResponse struct {
 
 type comfyTaskStatusResponse struct {
 	Status       string   `json:"status"`
+	PromptID     string   `json:"prompt_id"`
 	Progress     float64  `json:"progress"`
 	Message      string   `json:"message"`
 	Error        string   `json:"error"`
 	OutputFormat string   `json:"output_format"`
 	ResultImages []string `json:"result_images"`
+	ResultText   string   `json:"result_text"`
 	Data         struct {
 		Status       string   `json:"status"`
+		PromptID     string   `json:"prompt_id"`
 		Progress     float64  `json:"progress"`
 		ResultImages []string `json:"result_images"`
+		ResultText   string   `json:"result_text"`
 	} `json:"data"`
 }
 

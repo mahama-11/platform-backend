@@ -402,6 +402,13 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 		}
 		assetType := firstNonEmpty(variant.AssetType, runtimeAssetTypeForTask(job.TaskType))
 		assetMetadata := sanitizeProviderCallbackMetadata(variant.Metadata)
+		callbackInlineData := ""
+		callbackText := ""
+		mimeLower := strings.ToLower(strings.TrimSpace(variant.MimeType))
+		if (strings.HasPrefix(mimeLower, "text/") || strings.Contains(mimeLower, "json")) && strings.TrimSpace(variant.InlineData) != "" {
+			callbackInlineData = variant.InlineData
+			callbackText = variant.InlineData
+		}
 		if s.storage != nil && strings.TrimSpace(storageKey) != "" {
 			registered, registerErr := s.storage.RegisterAsset(context.Background(), assetstorage.RegisterAssetInput{
 				ProductCode: job.ProductCode,
@@ -436,6 +443,8 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 			Index:      variant.Index,
 			Status:     "ready",
 			IsSelected: variant.Index == 0,
+			InlineData: callbackInlineData,
+			Text:       callbackText,
 			Asset: ProductRecordResultAsset{
 				AssetType:      assetType,
 				SourceType:     "runtime_output",
@@ -496,11 +505,17 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 	s.runtimeJobLogger(job).
 		With("variant_count", len(variants), "output_storage_category", outputCategory).
 		Info("runtime.completed")
+	resultMetadata := sanitizeProviderCallbackMetadata(completion.Metadata)
+	if resultMetadata == nil {
+		resultMetadata = map[string]any{}
+	}
+	resultMetadata["source_type"] = job.SourceType
+	resultMetadata["runtime_job_id"] = job.ID
 	if err := s.notifyProductResults(job, ProductRecordResultsInput{
 		Status:       platformconst.StatusCompleted,
 		Progress:     completion.Progress,
 		StageMessage: completion.StageMessage,
-		Metadata:     sanitizeProviderCallbackMetadata(completion.Metadata),
+		Metadata:     resultMetadata,
 		Variants:     variants,
 	}); err != nil {
 		s.runtimeJobLogger(job).
@@ -521,6 +536,8 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 
 func runtimeAssetTypeForTask(taskType string) string {
 	switch taskType {
+	case RuntimeTaskImageUnderstanding:
+		return "json"
 	case RuntimeTaskTextReasoning, RuntimeTaskIntentPlanning, RuntimeTaskPromptPlanning, RuntimeTaskStrategyReport:
 		return "text"
 	default:

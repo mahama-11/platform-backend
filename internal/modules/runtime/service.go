@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 	"platform-service/pkg/utils"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Service struct {
@@ -465,6 +467,9 @@ func (s *Service) bindRuntimeTerminalChargeSessionTx(tx *gorm.DB, job *models.Ru
 			}
 		}
 		units := finalUnitsForRuntimeJob(job, &session)
+		if err := commitRuntimeChargeReservationTx(tx, &session, units); err != nil {
+			return err
+		}
 		return transitionChargeSessionTx(tx, &session, UpdateChargeSessionInput{
 			Status:         platformconst.SettlementStatusSettled,
 			FinalUnits:     &units,
@@ -497,6 +502,74 @@ func (s *Service) bindRuntimeTerminalChargeSessionTx(tx *gorm.DB, job *models.Ru
 	default:
 		return nil
 	}
+}
+
+func commitRuntimeChargeReservationTx(tx *gorm.DB, session *models.ChargeSession, units int64) error {
+	if session == nil || strings.TrimSpace(session.ReservationID) == "" || !tx.Migrator().HasTable(&models.ResourceReservation{}) {
+		return nil
+	}
+	var reservation models.ResourceReservation
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", session.ReservationID).First(&reservation).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	if reservation.Status != platformconst.ReservationStatusReserved {
+		return nil
+	}
+	if units <= 0 {
+		units = reservation.Units
+	}
+	if units <= 0 {
+		units = 1
+	}
+	now := time.Now()
+	if reservation.ResourceType != platformconst.ResourceTypeQuota {
+		return fmt.Errorf("runtime charge session reservation resource type %q is not supported by runtime settlement", reservation.ResourceType)
+	}
+	if !reservationMatchesChargeSession(&reservation, session) {
+		return fmt.Errorf("runtime charge session reservation boundary mismatch")
+	}
+	if tx.Migrator().HasTable(&models.QuotaLedger{}) {
+		if err := tx.Create(&models.QuotaLedger{
+			ID:                 utils.GenerateID(),
+			BillingSubjectType: reservation.BillingSubjectType,
+			BillingSubjectID:   reservation.BillingSubjectID,
+			BillableItemCode:   reservation.BillableItemCode,
+			Direction:          platformconst.LedgerDirectionConsume,
+			Units:              units,
+			Reason:             "runtime_charge_session_settlement",
+			ReferenceID:        session.ID,
+			CreatedAt:          now,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	reservation.Status = platformconst.ReservationStatusCommitted
+	reservation.CommittedAt = &now
+	finalizationID := defaultString(session.FinalizationID, "runtime-finalization-"+session.SourceID)
+	reservation.FinalizationID = &finalizationID
+	return tx.Save(&reservation).Error
+}
+
+func reservationMatchesChargeSession(reservation *models.ResourceReservation, session *models.ChargeSession) bool {
+	if reservation == nil || session == nil {
+		return false
+	}
+	if session.BillingSubjectType != "" && reservation.BillingSubjectType != "" && reservation.BillingSubjectType != session.BillingSubjectType {
+		return false
+	}
+	if session.BillingSubjectID != "" && reservation.BillingSubjectID != "" && reservation.BillingSubjectID != session.BillingSubjectID {
+		return false
+	}
+	if session.BillableItemCode != "" && reservation.BillableItemCode != "" && reservation.BillableItemCode != session.BillableItemCode {
+		return false
+	}
+	if session.SourceID != "" && reservation.ReferenceID != "" && reservation.ReferenceID != session.SourceID && reservation.ReferenceID != session.ID {
+		return false
+	}
+	return true
 }
 
 func validateRuntimeChargeSessionBoundary(job *models.RuntimeJob, session *models.ChargeSession) error {
@@ -715,6 +788,23 @@ func (s *Service) HandleProviderCallbackPayload(providerCode, runtimeJobID strin
 		}
 		if completion.Status == "" {
 			completion.Status = platformconst.StatusCompleted
+		}
+		if len(completion.Variants) == 0 {
+			if job.TaskType == RuntimeTaskImageUnderstanding {
+				if resultText, _ := completion.Metadata["result_text"].(string); strings.TrimSpace(resultText) != "" {
+					completion.Variants = append(completion.Variants, ProviderResultVariant{Index: 0, AssetType: "json", InlineData: resultText, MimeType: "application/json", Metadata: map[string]any{"provider": job.ProviderCode, "task_id": job.ProviderJobID}})
+				} else if payload != nil {
+					if resultText, _ := payload.Metadata["result_text"].(string); strings.TrimSpace(resultText) != "" {
+						assetType := "text"
+						mimeType := "text/plain"
+						if json.Valid([]byte(resultText)) {
+							assetType = "json"
+							mimeType = "application/json"
+						}
+						completion.Variants = append(completion.Variants, ProviderResultVariant{Index: 0, AssetType: assetType, InlineData: resultText, MimeType: mimeType, Metadata: map[string]any{"provider": job.ProviderCode, "task_id": job.ProviderJobID}})
+					}
+				}
+			}
 		}
 		if len(completion.Variants) == 0 {
 			return s.failRuntimeJob(job, "provider_callback_invalid", "PROVIDER_CALLBACK_INVALID", "provider callback completed without variants", now)

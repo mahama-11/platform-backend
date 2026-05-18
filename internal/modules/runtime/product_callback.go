@@ -47,6 +47,8 @@ type ProductRecordResultVariant struct {
 	Index      int                      `json:"index"`
 	Status     string                   `json:"status"`
 	IsSelected bool                     `json:"is_selected,omitempty"`
+	InlineData string                   `json:"inline_data,omitempty"`
+	Text       string                   `json:"text,omitempty"`
 	Asset      ProductRecordResultAsset `json:"asset"`
 }
 

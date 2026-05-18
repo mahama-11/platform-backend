@@ -75,9 +75,15 @@ bootstrap:
       - product_code: "ecommerce"
         task_type: "image_generation"
         provider_code: "comfyui_bridge"
-        priority: 50
+        priority: 150
         enabled: true
         metadata: '{"objective_scores":{"quality":92,"speed":45,"cost":35},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "ecommerce"
+        task_type: "image_understanding"
+        provider_code: "comfyui_bridge"
+        priority: 150
+        enabled: true
+        metadata: '{"objective_scores":{"quality":92,"speed":45,"cost":35},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"],"input_modes":["dual_track_sources"],"output_mime_types":["application/json"]}'
       - product_code: "ecommerce"
         task_type: "image_generation"
         provider_code: "volcengine"
