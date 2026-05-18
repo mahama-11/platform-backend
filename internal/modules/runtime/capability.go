@@ -48,7 +48,7 @@ type runtimeTaskContractDefinition struct {
 }
 
 var runtimeTaskContractDefinitions = []runtimeTaskContractDefinition{
-	{TaskType: RuntimeTaskImageUnderstanding, ContractStatus: RuntimeContractStatusNeeded},
+	{TaskType: RuntimeTaskImageUnderstanding, ContractStatus: RuntimeContractStatusReady},
 	{TaskType: RuntimeTaskOCR, ContractStatus: RuntimeContractStatusNeeded},
 	{TaskType: RuntimeTaskImageGeneration, ContractStatus: RuntimeContractStatusReady},
 	{TaskType: RuntimeTaskImageInpainting, ContractStatus: RuntimeContractStatusNeeded},
