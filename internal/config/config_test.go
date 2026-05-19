@@ -38,4 +38,7 @@ security:
 	if cfg.Runtime.MaxAttempts == 0 || cfg.Redis.Port == 0 {
 		t.Fatalf("expected defaults to be populated")
 	}
+	if cfg.Security.MaxBodyBytes != 16*1024*1024 {
+		t.Fatalf("expected source-upload-safe default body limit, got %d", cfg.Security.MaxBodyBytes)
+	}
 }
