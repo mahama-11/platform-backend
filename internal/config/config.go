@@ -10,24 +10,26 @@ import (
 )
 
 type Config struct {
-	Host          string              `mapstructure:"host"`
-	Port          int                 `mapstructure:"port"`
-	GinMode       string              `mapstructure:"gin_mode"`
-	LogLevel      string              `mapstructure:"log_level"`
-	UseMock       bool                `mapstructure:"use_mock"`
-	App           AppConfig           `mapstructure:"app"`
-	Bootstrap     BootstrapConfig     `mapstructure:"bootstrap"`
-	Database      DatabaseConfig      `mapstructure:"database"`
-	Redis         RedisConfig         `mapstructure:"redis"`
-	Runtime       RuntimeConfig       `mapstructure:"runtime"`
-	Volcengine    VolcengineConfig    `mapstructure:"volcengine"`
-	ComfyUIBridge ComfyUIBridgeConfig `mapstructure:"comfyui_bridge"`
-	Minimax       MinimaxConfig       `mapstructure:"minimax"`
-	KimiCoding    KimiCodingConfig    `mapstructure:"kimi_coding"`
-	Security      SecurityConfig      `mapstructure:"security"`
-	OAuth         OAuthConfig         `mapstructure:"oauth"`
-	Monitoring    MonitoringConfig    `mapstructure:"monitoring"`
-	Tasks         TasksConfig         `mapstructure:"tasks"`
+	Host          string                       `mapstructure:"host"`
+	Port          int                          `mapstructure:"port"`
+	GinMode       string                       `mapstructure:"gin_mode"`
+	LogLevel      string                       `mapstructure:"log_level"`
+	UseMock       bool                         `mapstructure:"use_mock"`
+	App           AppConfig                    `mapstructure:"app"`
+	Bootstrap     BootstrapConfig              `mapstructure:"bootstrap"`
+	Database      DatabaseConfig               `mapstructure:"database"`
+	Redis         RedisConfig                  `mapstructure:"redis"`
+	Runtime       RuntimeConfig                `mapstructure:"runtime"`
+	Volcengine    VolcengineConfig             `mapstructure:"volcengine"`
+	ComfyUIBridge ComfyUIBridgeConfig          `mapstructure:"comfyui_bridge"`
+	GeminiVisual  OpenAICompatibleVisionConfig `mapstructure:"gemini_visual"`
+	GeminiImage   OpenAICompatibleVisionConfig `mapstructure:"gemini_image"`
+	Minimax       MinimaxConfig                `mapstructure:"minimax"`
+	KimiCoding    KimiCodingConfig             `mapstructure:"kimi_coding"`
+	Security      SecurityConfig               `mapstructure:"security"`
+	OAuth         OAuthConfig                  `mapstructure:"oauth"`
+	Monitoring    MonitoringConfig             `mapstructure:"monitoring"`
+	Tasks         TasksConfig                  `mapstructure:"tasks"`
 }
 
 type AppConfig struct {
@@ -190,6 +192,16 @@ type ComfyUIBridgeConfig struct {
 	DefaultOutputFormat string        `mapstructure:"default_output_format"`
 }
 
+type OpenAICompatibleVisionConfig struct {
+	Enabled        bool          `mapstructure:"enabled"`
+	BaseURL        string        `mapstructure:"base_url"`
+	APIKey         string        `mapstructure:"api_key"`
+	Model          string        `mapstructure:"model"`
+	RequestTimeout time.Duration `mapstructure:"request_timeout"`
+	MaxTokens      int           `mapstructure:"max_tokens"`
+	Temperature    float64       `mapstructure:"temperature"`
+}
+
 type MinimaxConfig struct {
 	BaseURL        string        `mapstructure:"base_url"`
 	APIKey         string        `mapstructure:"api_key"`
@@ -305,6 +317,8 @@ func Load(configFile string) (*Config, error) {
 	v.SetEnvPrefix("PLATFORM")
 	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 	v.AutomaticEnv()
+	_ = v.BindEnv("gemini_visual.api_key")
+	_ = v.BindEnv("gemini_image.api_key")
 	setDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
@@ -391,6 +405,20 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("comfyui_bridge.callback_base_url", "")
 	v.SetDefault("comfyui_bridge.default_workflow_id", "")
 	v.SetDefault("comfyui_bridge.default_output_format", "png")
+	v.SetDefault("gemini_visual.enabled", false)
+	v.SetDefault("gemini_visual.base_url", "https://xingjiabiapi.org")
+	v.SetDefault("gemini_visual.api_key", "")
+	v.SetDefault("gemini_visual.model", "gemini-3-flash-preview")
+	v.SetDefault("gemini_visual.request_timeout", "60s")
+	v.SetDefault("gemini_visual.max_tokens", 2500)
+	v.SetDefault("gemini_visual.temperature", 0)
+	v.SetDefault("gemini_image.enabled", false)
+	v.SetDefault("gemini_image.base_url", "https://xingjiabiapi.org")
+	v.SetDefault("gemini_image.api_key", "")
+	v.SetDefault("gemini_image.model", "gemini-3-pro-image-preview")
+	v.SetDefault("gemini_image.request_timeout", "90s")
+	v.SetDefault("gemini_image.max_tokens", 1500)
+	v.SetDefault("gemini_image.temperature", 0)
 	v.SetDefault("minimax.base_url", "https://api.minimaxi.com/v1")
 	v.SetDefault("minimax.api_key", "")
 	v.SetDefault("minimax.model", "MiniMax-M2.7")
