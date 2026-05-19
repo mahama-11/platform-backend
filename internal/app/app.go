@@ -79,7 +79,7 @@ func New(configFile string) (*App, error) {
 	runtimeService := runtime.NewService(runtimeRepo, cfg.Runtime, cfg.Security, cfg.ComfyUIBridge)
 	assetStorageService := assetstorage.NewService(runtimeRepo)
 	templateOpsService := templateops.NewService(*cfg, db)
-	runtimeRegistry := runtime.NewProviderRegistry(cfg.Volcengine, cfg.ComfyUIBridge, cfg.Minimax, cfg.KimiCoding)
+	runtimeRegistry := runtime.NewProviderRegistry(cfg.Volcengine, cfg.ComfyUIBridge, cfg.GeminiVisual, cfg.GeminiImage, cfg.Minimax, cfg.KimiCoding)
 	runtimeService.UseRuntime(nil, runtimeRegistry)
 	runtimeService.UseAssetStorage(assetStorageService)
 	var runtimeQueue *runtime.AsynqRuntime
