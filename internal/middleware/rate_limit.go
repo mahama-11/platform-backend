@@ -32,7 +32,7 @@ func RateLimit(perSecond int, burst int) gin.HandlerFunc {
 // BodySizeLimit 限制请求体大小，超过限制返回 413。
 func BodySizeLimit(maxBytes int64) gin.HandlerFunc {
 	if maxBytes <= 0 {
-		maxBytes = 4 * 1024 * 1024 // 4MB default
+		maxBytes = 16 * 1024 * 1024 // 16MB default; source image uploads use base64 JSON payloads.
 	}
 	return func(c *gin.Context) {
 		if c.Request.Body != nil {
