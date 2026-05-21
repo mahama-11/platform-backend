@@ -223,17 +223,61 @@ func (p *comfyUIBridgeProvider) buildComfyUnderstandingImagePayload(assets []Pro
 			continue
 		}
 		if strings.HasPrefix(source, "data:") {
-			if _, err := extractDataURLPayload(source); err != nil {
-				return "", newNonRetryableProviderError(err.Error())
+			if err := validateComfyUnderstandingImagePayload(source, ""); err != nil {
+				return "", err
 			}
 			return normalizeDataURL(source), nil
 		}
 		if isBase64Payload(source) {
 			mimeType := firstNonEmpty(strings.TrimSpace(asset.MimeType), "image/png")
-			return "data:" + mimeType + ";base64," + strings.TrimSpace(source), nil
+			payload := "data:" + mimeType + ";base64," + strings.TrimSpace(source)
+			if err := validateComfyUnderstandingImagePayload(payload, mimeType); err != nil {
+				return "", err
+			}
+			return payload, nil
 		}
 	}
 	return "", newNonRetryableProviderError("no usable image payload found for comfyui bridge image understanding")
+}
+
+func validateComfyUnderstandingImagePayload(dataURL, fallbackMime string) error {
+	payload, err := extractDataURLPayload(dataURL)
+	if err != nil {
+		return newNonRetryableProviderError(err.Error())
+	}
+	raw, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return newNonRetryableProviderError("invalid base64 image payload")
+	}
+	if len(raw) < 8 {
+		return newNonRetryableProviderError("source image file is invalid or unreadable")
+	}
+	mimeType := strings.ToLower(strings.TrimSpace(fallbackMime))
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(dataURL)), "data:") {
+		header := strings.SplitN(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(dataURL)), "data:"), ";", 2)[0]
+		if strings.TrimSpace(header) != "" {
+			mimeType = strings.TrimSpace(header)
+		}
+	}
+	switch mimeType {
+	case "image/jpeg", "image/jpg":
+		if len(raw) < 3 || raw[0] != 0xff || raw[1] != 0xd8 || raw[2] != 0xff {
+			return newNonRetryableProviderError("source JPEG image file is invalid or unreadable")
+		}
+	case "image/png":
+		if !bytes.HasPrefix(raw, []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}) {
+			return newNonRetryableProviderError("source PNG image file is invalid or unreadable")
+		}
+	case "image/gif":
+		if !bytes.HasPrefix(raw, []byte("GIF87a")) && !bytes.HasPrefix(raw, []byte("GIF89a")) {
+			return newNonRetryableProviderError("source GIF image file is invalid or unreadable")
+		}
+	case "image/webp":
+		if len(raw) < 12 || !bytes.HasPrefix(raw, []byte("RIFF")) || string(raw[8:12]) != "WEBP" {
+			return newNonRetryableProviderError("source WEBP image file is invalid or unreadable")
+		}
+	}
+	return nil
 }
 
 func (p *comfyUIBridgeProvider) buildComfyMultiImagePayload(assets []ProviderSourceAsset) ([]string, error) {
@@ -292,7 +336,7 @@ func (p *comfyUIBridgeProvider) postJSON(ctx context.Context, path string, paylo
 		return newRetryableProviderError(fmt.Sprintf("read comfyui bridge response: %v", err))
 	}
 	if resp.StatusCode >= 400 {
-		return classifyVolcengineError(fmt.Sprintf("comfyui bridge request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody))), resp.StatusCode)
+		return classifyComfyUIBridgeError(resp.StatusCode, respBody)
 	}
 	if out != nil {
 		if err := json.Unmarshal(respBody, out); err != nil {
@@ -320,7 +364,7 @@ func (p *comfyUIBridgeProvider) getJSON(ctx context.Context, path string, out an
 		return newRetryableProviderError(fmt.Sprintf("read comfyui bridge poll response: %v", err))
 	}
 	if resp.StatusCode >= 400 {
-		return classifyVolcengineError(fmt.Sprintf("comfyui bridge poll failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(respBody))), resp.StatusCode)
+		return classifyComfyUIBridgePollError(resp.StatusCode, respBody)
 	}
 	if err := json.Unmarshal(respBody, out); err != nil {
 		return newRetryableProviderError(fmt.Sprintf("decode comfyui bridge poll response: %v body=%s", err, trimBodyForError(respBody)))
@@ -348,6 +392,26 @@ func progressToInt(value float64) int {
 		return 0
 	}
 	return int(math.Round(value))
+}
+
+func classifyComfyUIBridgeError(status int, body []byte) error {
+	return classifyComfyUIBridgeHTTPError("comfyui bridge request failed", status, body)
+}
+
+func classifyComfyUIBridgePollError(status int, body []byte) error {
+	return classifyComfyUIBridgeHTTPError("comfyui bridge poll failed", status, body)
+}
+
+func classifyComfyUIBridgeHTTPError(prefix string, status int, body []byte) error {
+	message := strings.TrimSpace(string(body))
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "traceback") || strings.Contains(lower, "name 'traceback' is not defined") || strings.Contains(lower, "python") {
+		message = "image understanding provider failed internally"
+	}
+	if len(message) > 300 {
+		message = message[:300] + "...(truncated)"
+	}
+	return classifyVolcengineError(fmt.Sprintf("%s: status=%d body=%s", prefix, status, message), status)
 }
 
 func trimBodyForError(body []byte) string {

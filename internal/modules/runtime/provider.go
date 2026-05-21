@@ -178,13 +178,16 @@ type ProviderRegistry struct {
 	providers map[string]GenerationProvider
 }
 
-func NewProviderRegistry(volcengineCfg config.VolcengineConfig, comfyCfg config.ComfyUIBridgeConfig, geminiCfg config.OpenAICompatibleVisionConfig, geminiImageCfg config.OpenAICompatibleVisionConfig, minimaxCfg config.MinimaxConfig, kimiCfg config.KimiCodingConfig) *ProviderRegistry {
+func NewProviderRegistry(volcengineCfg config.VolcengineConfig, comfyCfg config.ComfyUIBridgeConfig, geminiCfg config.OpenAICompatibleVisionConfig, geminiImageCfg config.OpenAICompatibleVisionConfig, minimaxCfg config.MinimaxConfig, minimaxImageCfg config.MinimaxImageConfig, kimiCfg config.KimiCodingConfig) *ProviderRegistry {
 	registry := &ProviderRegistry{providers: map[string]GenerationProvider{}}
 	registry.Register(newManualProvider("manual"))
 	registry.Register(newManualProvider("mock"))
 	registry.Register(newVolcengineImageProvider("volcengine", volcengineCfg))
 	registry.Register(newMinimaxTextProvider("minimax_text", minimaxCfg))
 	registry.Register(newKimiCodingTextProvider("kimi_coding_text", kimiCfg))
+	if minimaxImageCfg.Enabled {
+		registry.Register(newMinimaxImageProvider("minimax_image_generation", minimaxImageCfg))
+	}
 	if geminiCfg.Enabled {
 		registry.Register(newGeminiVisualProvider("gemini_visual_understanding", geminiCfg))
 	}

@@ -98,6 +98,12 @@ bootstrap:
         metadata: '{"objective_scores":{"quality":90,"speed":55,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"],"input_modes":["text_to_image","image_to_image","image_edit"],"output_mime_types":["image/png","image/jpeg","image/webp"],"frontend_selectable":true}'
       - product_code: "ecommerce"
         task_type: "image_generation"
+        provider_code: "minimax_image_generation"
+        priority: 125
+        enabled: true
+        metadata: '{"objective_scores":{"quality":88,"speed":65,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"],"input_modes":["image_to_image","image_edit"],"output_mime_types":["image/jpeg"],"frontend_selectable":true,"supports_subject_reference":true}'
+      - product_code: "ecommerce"
+        task_type: "image_generation"
         provider_code: "volcengine"
         priority: 100
         enabled: true
@@ -252,6 +258,14 @@ minimax:
   request_timeout: 60s
   max_tokens: 2048
   temperature: 0.2
+
+minimax_image:
+  enabled: true
+  base_url: "https://api.minimaxi.com/v1"
+  api_key: ""
+  model: "image-01"
+  request_timeout: 120s
+  default_aspect_ratio: "1:1"
 
 kimi_coding:
   base_url: "https://api.kimi.com/coding"

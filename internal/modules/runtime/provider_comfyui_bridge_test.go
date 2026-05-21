@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"platform-service/internal/config"
@@ -127,5 +128,61 @@ func TestComfyUIBridgePollCompletedBuildsInlineData(t *testing.T) {
 	}
 	if result.Completion.Variants[0].InlineData != "data:image/png;base64,"+sampleBase64 {
 		t.Fatalf("unexpected inline data: %+v", result.Completion.Variants[0])
+	}
+}
+
+func TestComfyUIBridgeSubmitSanitizesPythonTraceback(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "name 'traceback' is not defined", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	provider := newComfyUIBridgeProvider("comfyui_bridge", config.ComfyUIBridgeConfig{BaseURL: server.URL})
+	_, err := provider.Submit(context.Background(), ProviderJobRequest{
+		RuntimeJobID: "job-understand",
+		TaskType:     RuntimeTaskImageUnderstanding,
+		Input: RuntimeInputManifest{SourceAssets: []ProviderSourceAsset{{
+			ID:        "asset-1",
+			MimeType:  "image/png",
+			SourceURL: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=",
+		}}},
+	})
+	if err == nil {
+		t.Fatal("expected provider error")
+	}
+	if strings.Contains(err.Error(), "traceback") {
+		t.Fatalf("raw traceback leaked: %v", err)
+	}
+	if !strings.Contains(err.Error(), "image understanding provider failed internally") {
+		t.Fatalf("expected sanitized provider message, got %v", err)
+	}
+}
+
+func TestComfyUIBridgeRejectsUnreadableUnderstandingImageBeforeProvider(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	provider := newComfyUIBridgeProvider("comfyui_bridge", config.ComfyUIBridgeConfig{BaseURL: server.URL})
+	_, err := provider.Submit(context.Background(), ProviderJobRequest{
+		RuntimeJobID: "job-invalid-image",
+		TaskType:     RuntimeTaskImageUnderstanding,
+		Input: RuntimeInputManifest{SourceAssets: []ProviderSourceAsset{{
+			ID:        "asset-1",
+			MimeType:  "image/jpeg",
+			SourceURL: "data:image/jpeg;base64,dGVzdA==",
+		}}},
+	})
+	if err == nil {
+		t.Fatal("expected invalid image error")
+	}
+	if called {
+		t.Fatal("provider should not be called for an unreadable source image")
+	}
+	if !strings.Contains(err.Error(), "source image file is invalid or unreadable") && !strings.Contains(err.Error(), "source JPEG image file is invalid or unreadable") {
+		t.Fatalf("unexpected invalid image error: %v", err)
 	}
 }

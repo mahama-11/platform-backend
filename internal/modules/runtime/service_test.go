@@ -79,6 +79,72 @@ func TestHandleProviderCallbackValidatesSignatureAndReturnsTerminalJob(t *testin
 	}
 }
 
+func TestCreateChargeSessionReusesExistingReservationKeyForSameBoundary(t *testing.T) {
+	service, _, _ := newRuntimeServiceForTest(t)
+
+	input := CreateChargeSessionInput{
+		SourceType:         "visual_generation",
+		SourceID:           "gv-1",
+		ProductCode:        "ecommerce",
+		OrganizationID:     "org-1",
+		UserID:             "user-1",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-1",
+		BillableItemCode:   "ecommerce.image.generate",
+		ResourceType:       "quota",
+		ReservationKey:     "reservation-key-1",
+		EstimatedUnits:     1,
+	}
+	first, err := service.CreateChargeSession(input)
+	if err != nil {
+		t.Fatalf("CreateChargeSession first: %v", err)
+	}
+	again, err := service.CreateChargeSession(input)
+	if err != nil {
+		t.Fatalf("CreateChargeSession duplicate reservation key should be idempotent: %v", err)
+	}
+	if again.ID != first.ID || again.ReservationKey != first.ReservationKey {
+		t.Fatalf("expected existing charge session reuse, got %+v want %+v", again, first)
+	}
+}
+
+func TestCreateChargeSessionRejectsDuplicateReservationKeyForDifferentSource(t *testing.T) {
+	service, _, _ := newRuntimeServiceForTest(t)
+
+	first, err := service.CreateChargeSession(CreateChargeSessionInput{
+		SourceType:         "visual_generation",
+		SourceID:           "gv-1",
+		ProductCode:        "ecommerce",
+		OrganizationID:     "org-1",
+		UserID:             "user-1",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-1",
+		BillableItemCode:   "ecommerce.image.generate",
+		ResourceType:       "quota",
+		ReservationKey:     "reservation-key-1",
+		EstimatedUnits:     1,
+	})
+	if err != nil {
+		t.Fatalf("CreateChargeSession first: %v", err)
+	}
+	again, err := service.CreateChargeSession(CreateChargeSessionInput{
+		SourceType:         first.SourceType,
+		SourceID:           "gv-2",
+		ProductCode:        first.ProductCode,
+		OrganizationID:     first.OrganizationID,
+		UserID:             first.UserID,
+		BillingSubjectType: first.BillingSubjectType,
+		BillingSubjectID:   first.BillingSubjectID,
+		BillableItemCode:   first.BillableItemCode,
+		ResourceType:       first.ResourceType,
+		ReservationKey:     first.ReservationKey,
+		EstimatedUnits:     1,
+	})
+	if err == nil || again != nil {
+		t.Fatalf("expected duplicate reservation key with different source to fail, got session=%+v err=%v", again, err)
+	}
+}
+
 func TestUpdateRuntimeJobRecordAttemptAndChargeSession(t *testing.T) {
 	service, repo, _ := newRuntimeServiceForTest(t)
 	job := &models.RuntimeJob{
