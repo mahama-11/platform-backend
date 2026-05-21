@@ -65,7 +65,7 @@ func defaultProviderDefinitions(cfg *config.Config) []config.BootstrapRuntimePro
 
 func providerTypeForBootstrapCode(code string) string {
 	switch code {
-	case "volcengine", "comfyui_bridge", "gemini_image_generation":
+	case "volcengine", "comfyui_bridge", "gemini_image_generation", "minimax_image_generation":
 		return "image_generation"
 	case "gemini_visual_understanding":
 		return "image_understanding"
@@ -93,6 +93,8 @@ func credentialRefForBootstrapCode(code string) string {
 		return "config:gemini_visual.api_key"
 	case "gemini_image_generation":
 		return "config:gemini_image.api_key"
+	case "minimax_image_generation":
+		return "config:minimax_image.api_key"
 	case "kimi_coding_text":
 		return "config:kimi_coding.api_key"
 	case "minimax_text":

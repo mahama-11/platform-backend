@@ -269,6 +269,14 @@ func (r *RuntimeRepository) FindChargeSessionByID(id string) (*models.ChargeSess
 	return &item, nil
 }
 
+func (r *RuntimeRepository) FindChargeSessionByReservationKey(reservationKey string) (*models.ChargeSession, error) {
+	var item models.ChargeSession
+	if err := r.db.Where("reservation_key = ?", reservationKey).First(&item).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (r *RuntimeRepository) FindChargeSessionBySource(sourceType, sourceID string) (*models.ChargeSession, error) {
 	var item models.ChargeSession
 	if err := r.db.Where("source_type = ? AND source_id = ?", sourceType, sourceID).Order("created_at DESC").First(&item).Error; err != nil {

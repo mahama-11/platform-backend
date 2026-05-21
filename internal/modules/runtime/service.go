@@ -424,9 +424,29 @@ func (s *Service) CreateChargeSession(input CreateChargeSessionInput) (*models.C
 		Metadata:           input.Metadata,
 	}
 	if err := s.repo.CreateChargeSession(item); err != nil {
+		if existing, findErr := s.repo.FindChargeSessionByReservationKey(item.ReservationKey); findErr == nil && chargeSessionIdempotentBoundaryMatches(existing, item) {
+			return existing, nil
+		}
 		return nil, err
 	}
 	return item, nil
+}
+
+func chargeSessionIdempotentBoundaryMatches(existing, requested *models.ChargeSession) bool {
+	if existing == nil || requested == nil {
+		return false
+	}
+	return strings.TrimSpace(existing.ReservationKey) != "" &&
+		strings.TrimSpace(existing.ReservationKey) == strings.TrimSpace(requested.ReservationKey) &&
+		existing.SourceType == requested.SourceType &&
+		existing.SourceID == requested.SourceID &&
+		existing.ProductCode == requested.ProductCode &&
+		existing.OrganizationID == requested.OrganizationID &&
+		existing.UserID == requested.UserID &&
+		existing.BillingSubjectType == requested.BillingSubjectType &&
+		existing.BillingSubjectID == requested.BillingSubjectID &&
+		existing.BillableItemCode == requested.BillableItemCode &&
+		existing.ResourceType == requested.ResourceType
 }
 
 func (s *Service) GetChargeSession(id string) (*models.ChargeSession, error) {
@@ -509,7 +529,14 @@ func commitRuntimeChargeReservationTx(tx *gorm.DB, session *models.ChargeSession
 		return nil
 	}
 	var reservation models.ResourceReservation
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", session.ReservationID).First(&reservation).Error; err != nil {
+	query := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", session.ReservationID)
+	if strings.TrimSpace(session.ID) != "" {
+		query = query.Or("reference_id = ?", session.ID)
+	}
+	if strings.TrimSpace(session.SourceID) != "" {
+		query = query.Or("reservation_key = ?", "reserve:"+session.SourceID)
+	}
+	if err := query.First(&reservation).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil
 		}

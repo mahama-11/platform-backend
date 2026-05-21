@@ -25,6 +25,7 @@ type Config struct {
 	GeminiVisual  OpenAICompatibleVisionConfig `mapstructure:"gemini_visual"`
 	GeminiImage   OpenAICompatibleVisionConfig `mapstructure:"gemini_image"`
 	Minimax       MinimaxConfig                `mapstructure:"minimax"`
+	MinimaxImage  MinimaxImageConfig           `mapstructure:"minimax_image"`
 	KimiCoding    KimiCodingConfig             `mapstructure:"kimi_coding"`
 	Security      SecurityConfig               `mapstructure:"security"`
 	OAuth         OAuthConfig                  `mapstructure:"oauth"`
@@ -211,6 +212,15 @@ type MinimaxConfig struct {
 	Temperature    float64       `mapstructure:"temperature"`
 }
 
+type MinimaxImageConfig struct {
+	Enabled            bool          `mapstructure:"enabled"`
+	BaseURL            string        `mapstructure:"base_url"`
+	APIKey             string        `mapstructure:"api_key"`
+	Model              string        `mapstructure:"model"`
+	RequestTimeout     time.Duration `mapstructure:"request_timeout"`
+	DefaultAspectRatio string        `mapstructure:"default_aspect_ratio"`
+}
+
 type KimiCodingConfig struct {
 	BaseURL        string        `mapstructure:"base_url"`
 	APIKey         string        `mapstructure:"api_key"`
@@ -319,6 +329,7 @@ func Load(configFile string) (*Config, error) {
 	v.AutomaticEnv()
 	_ = v.BindEnv("gemini_visual.api_key")
 	_ = v.BindEnv("gemini_image.api_key")
+	_ = v.BindEnv("minimax_image.api_key")
 	setDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
@@ -425,6 +436,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("minimax.request_timeout", "60s")
 	v.SetDefault("minimax.max_tokens", 2048)
 	v.SetDefault("minimax.temperature", 0.2)
+	v.SetDefault("minimax_image.enabled", false)
+	v.SetDefault("minimax_image.base_url", "https://api.minimaxi.com/v1")
+	v.SetDefault("minimax_image.api_key", "")
+	v.SetDefault("minimax_image.model", "image-01")
+	v.SetDefault("minimax_image.request_timeout", "120s")
+	v.SetDefault("minimax_image.default_aspect_ratio", "1:1")
 	v.SetDefault("kimi_coding.base_url", "https://api.kimi.com/coding")
 	v.SetDefault("kimi_coding.api_key", "")
 	v.SetDefault("kimi_coding.model", "kimi-k2.6")

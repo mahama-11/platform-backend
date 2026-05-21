@@ -44,7 +44,10 @@ func (p *geminiVisualProvider) Submit(ctx context.Context, req ProviderJobReques
 	if err != nil {
 		return nil, err
 	}
-	prompt := strings.TrimSpace(stringMapValue(req.Input.ParamsSnapshot, "understanding_prompt"))
+	prompt := strings.TrimSpace(req.Input.PromptSnapshot.UserPrompt)
+	if prompt == "" {
+		prompt = strings.TrimSpace(stringMapValue(req.Input.ParamsSnapshot, "understanding_prompt"))
+	}
 	if prompt == "" {
 		prompt = defaultGeminiVisualPrompt
 	}
