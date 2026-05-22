@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,7 +38,7 @@ func (p *minimaxImageProvider) Submit(ctx context.Context, req ProviderJobReques
 	if strings.TrimSpace(p.cfg.APIKey) == "" {
 		return nil, newNonRetryableProviderError("minimax image api key is not configured")
 	}
-	prompt := buildVolcenginePrompt(req)
+	prompt := buildMinimaxImagePrompt(req)
 	if prompt == "" {
 		return nil, newNonRetryableProviderError("prompt is required for minimax image generation")
 	}
@@ -45,6 +47,7 @@ func (p *minimaxImageProvider) Submit(ctx context.Context, req ProviderJobReques
 		stringMapValue(req.Input.ParamsSnapshot, "aspect_ratio"),
 		stringMapValue(req.Input.ParamsSnapshot, "aspectRatio"),
 		stringMapValue(req.Input.ParamsSnapshot, "ratio"),
+		minimaxAspectRatioFromDimensions(req.Input.ParamsSnapshot),
 		p.cfg.DefaultAspectRatio,
 		"1:1",
 	))
@@ -91,10 +94,14 @@ func (p *minimaxImageProvider) Submit(ctx context.Context, req ProviderJobReques
 			InlineData: dataURL,
 			MimeType:   mimeTypeFromDataURL(dataURL),
 			Metadata: map[string]any{
-				"provider":       p.name,
-				"provider_model": model,
-				"input_mode":     req.Input.InputMode,
-				"response_id":    resp.ID,
+				"provider":                p.name,
+				"provider_model":          model,
+				"input_mode":              req.Input.InputMode,
+				"response_id":             resp.ID,
+				"requested_aspect_ratio":  aspectRatio,
+				"requested_width":         intMapValue(req.Input.ParamsSnapshot, "width"),
+				"requested_height":        intMapValue(req.Input.ParamsSnapshot, "height"),
+				"negative_prompt_applied": minimaxNegativePrompt(req) != "",
 			},
 		})
 	}
@@ -214,6 +221,128 @@ func normalizeMinimaxAspectRatio(value string) string {
 	default:
 		return "1:1"
 	}
+}
+
+func buildMinimaxImagePrompt(req ProviderJobRequest) string {
+	base := buildVolcenginePrompt(req)
+	negative := minimaxNegativePrompt(req)
+	if negative == "" {
+		return base
+	}
+	if base == "" {
+		return "Must avoid / negative requirements: " + negative
+	}
+	return base + "\n\nMust avoid / negative requirements: " + negative
+}
+
+func minimaxNegativePrompt(req ProviderJobRequest) string {
+	parts := []string{
+		stringMapValue(req.Input.ParamsSnapshot, "negative_prompt"),
+		stringMapValue(req.Input.ParamsSnapshot, "negative_prompt_text"),
+		stringMapValue(req.Input.ParamsSnapshot, "negative_requirement"),
+	}
+	return strings.Join(compactUniqueMinimaxStrings(parts), "\n")
+}
+
+func compactUniqueMinimaxStrings(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func minimaxAspectRatioFromDimensions(params map[string]any) string {
+	width := intMapValue(params, "width")
+	height := intMapValue(params, "height")
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	gcd := intGCD(width, height)
+	exact := fmt.Sprintf("%d:%d", width/gcd, height/gcd)
+	if normalizeMinimaxAspectRatio(exact) == exact {
+		return exact
+	}
+	return nearestMinimaxAspectRatio(width, height)
+}
+
+func nearestMinimaxAspectRatio(width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	type candidate struct {
+		label string
+		ratio float64
+	}
+	candidates := []candidate{
+		{"1:1", 1},
+		{"16:9", 16.0 / 9.0},
+		{"9:16", 9.0 / 16.0},
+		{"4:3", 4.0 / 3.0},
+		{"3:4", 3.0 / 4.0},
+		{"3:2", 3.0 / 2.0},
+		{"2:3", 2.0 / 3.0},
+		{"21:9", 21.0 / 9.0},
+	}
+	target := float64(width) / float64(height)
+	best := candidates[0]
+	bestDistance := math.Abs(math.Log(target / best.ratio))
+	for _, item := range candidates[1:] {
+		distance := math.Abs(math.Log(target / item.ratio))
+		if distance < bestDistance {
+			best = item
+			bestDistance = distance
+		}
+	}
+	return best.label
+}
+
+func intMapValue(values map[string]any, key string) int {
+	if len(values) == 0 {
+		return 0
+	}
+	value, ok := values[key]
+	if !ok || value == nil {
+		return 0
+	}
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, _ := typed.Int64()
+		return int(parsed)
+	case string:
+		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func intGCD(a, b int) int {
+	if a < 0 {
+		a = -a
+	}
+	if b < 0 {
+		b = -b
+	}
+	for b != 0 {
+		a, b = b, a%b
+	}
+	if a == 0 {
+		return 1
+	}
+	return a
 }
 
 func classifyMinimaxBusinessError(message string, code int) error {
