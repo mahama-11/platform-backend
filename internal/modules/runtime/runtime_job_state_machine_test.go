@@ -222,3 +222,39 @@ func TestApplyRuntimeJobTransitionTerminalMetadataPatchKeepsCompletedStatus(t *t
 		t.Fatalf("unexpected terminal patch result=%+v job=%+v", result, job)
 	}
 }
+
+func TestApplyRuntimeJobTransitionTypedAdminStatusRegression(t *testing.T) {
+	now := time.Date(2026, 5, 23, 10, 0, 0, 0, time.UTC)
+
+	t.Run("invalid skip to completed is rejected", func(t *testing.T) {
+		job := &models.RuntimeJob{ID: "job-typed-invalid", Status: platformconst.StatusQueued, Stage: platformconst.StatusQueued}
+		_, err := ApplyRuntimeJobTransition(job, RuntimeJobTransitionInput{
+			Event:  RuntimeJobEventAdminPatch,
+			Now:    now,
+			Status: RuntimeJobStatusCompleted,
+			Stage:  platformconst.StatusCompleted,
+		})
+		if err == nil {
+			t.Fatalf("expected typed queued -> completed admin transition to fail")
+		}
+		if job.Status != platformconst.StatusQueued || job.Stage != platformconst.StatusQueued {
+			t.Fatalf("invalid typed transition mutated job: %+v", job)
+		}
+	})
+
+	t.Run("same status remains an allowed no-op metadata patch", func(t *testing.T) {
+		job := &models.RuntimeJob{ID: "job-typed-noop", Status: platformconst.StatusProcessing, Stage: "provider_running"}
+		result, err := ApplyRuntimeJobTransition(job, RuntimeJobTransitionInput{
+			Event:        RuntimeJobEventAdminPatch,
+			Now:          now,
+			Status:       RuntimeJobStatusProcessing,
+			StageMessage: "still running",
+		})
+		if err != nil {
+			t.Fatalf("expected same-status typed admin patch to be valid: %v", err)
+		}
+		if result.FromStatus != platformconst.StatusProcessing || result.ToStatus != platformconst.StatusProcessing || job.Status != platformconst.StatusProcessing || job.StageMessage != "still running" {
+			t.Fatalf("unexpected same-status typed result=%+v job=%+v", result, job)
+		}
+	})
+}

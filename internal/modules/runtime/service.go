@@ -310,7 +310,7 @@ func (s *Service) UpdateRuntimeJob(id string, input UpdateRuntimeJobInput) (*mod
 	updated, _, err := s.transitionRuntimeJob(item, RuntimeJobTransitionInput{
 		Event:          RuntimeJobEventAdminPatch,
 		Now:            now,
-		Status:         input.Status,
+		Status:         RuntimeJobStatus(input.Status),
 		Stage:          input.Stage,
 		StageMessage:   input.StageMessage,
 		ProviderJobID:  input.ProviderJobID,

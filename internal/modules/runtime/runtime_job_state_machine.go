@@ -13,6 +13,16 @@ import (
 
 type RuntimeJobTransitionEvent string
 
+type RuntimeJobStatus string
+
+const (
+	RuntimeJobStatusQueued     RuntimeJobStatus = RuntimeJobStatus(platformconst.StatusQueued)
+	RuntimeJobStatusProcessing RuntimeJobStatus = RuntimeJobStatus(platformconst.StatusProcessing)
+	RuntimeJobStatusCompleted  RuntimeJobStatus = RuntimeJobStatus(platformconst.StatusCompleted)
+	RuntimeJobStatusFailed     RuntimeJobStatus = RuntimeJobStatus(platformconst.StatusFailed)
+	RuntimeJobStatusCanceled   RuntimeJobStatus = RuntimeJobStatus(platformconst.StatusCanceled)
+)
+
 const (
 	RuntimeJobEventAdminPatch            RuntimeJobTransitionEvent = "admin_patch"
 	RuntimeJobEventDispatchStarted       RuntimeJobTransitionEvent = "dispatch_started"
@@ -30,7 +40,7 @@ type RuntimeJobTransitionInput struct {
 	Event RuntimeJobTransitionEvent
 	Now   time.Time
 
-	Status       string
+	Status       RuntimeJobStatus
 	Stage        string
 	StageMessage string
 
@@ -85,46 +95,47 @@ func ApplyRuntimeJobTransition(job *models.RuntimeJob, input RuntimeJobTransitio
 	if err != nil {
 		return result, err
 	}
-	result.ToStatus = target
+	result.ToStatus = string(target)
 	if err := validateRuntimeJobEventTransition(input.Event, from, target); err != nil {
 		return result, err
 	}
 
-	job.Status = target
+	job.Status = string(target)
 	applyRuntimeJobTransitionFields(job, input)
 	applyRuntimeJobTransitionTimestamps(job, input.Now, target, input.Event)
 
-	result.Terminal = isTerminalRuntimeJobStatus(target)
-	result.BindTerminalCharge = result.Terminal && (input.Event == RuntimeJobEventCompleted || input.Event == RuntimeJobEventFailed || input.Event == RuntimeJobEventCanceled || (input.Event == RuntimeJobEventAdminPatch && target != from))
+	result.Terminal = isTerminalRuntimeJobStatus(string(target))
+	result.BindTerminalCharge = result.Terminal && (input.Event == RuntimeJobEventCompleted || input.Event == RuntimeJobEventFailed || input.Event == RuntimeJobEventCanceled || (input.Event == RuntimeJobEventAdminPatch && string(target) != from))
 	return result, nil
 }
 
-func runtimeJobTransitionTargetStatus(job *models.RuntimeJob, input RuntimeJobTransitionInput) (string, error) {
+func runtimeJobTransitionTargetStatus(job *models.RuntimeJob, input RuntimeJobTransitionInput) (RuntimeJobStatus, error) {
 	switch input.Event {
 	case RuntimeJobEventAdminPatch:
 		if input.Status != "" {
 			return input.Status, nil
 		}
-		return job.Status, nil
+		return RuntimeJobStatus(job.Status), nil
 	case RuntimeJobEventDispatchStarted, RuntimeJobEventProviderAccepted, RuntimeJobEventProviderProgress:
-		return platformconst.StatusProcessing, nil
+		return RuntimeJobStatus(platformconst.StatusProcessing), nil
 	case RuntimeJobEventRetryScheduled, RuntimeJobEventFallbackScheduled:
-		return platformconst.StatusQueued, nil
+		return RuntimeJobStatus(platformconst.StatusQueued), nil
 	case RuntimeJobEventCompleted:
-		return platformconst.StatusCompleted, nil
+		return RuntimeJobStatus(platformconst.StatusCompleted), nil
 	case RuntimeJobEventFailed:
-		return platformconst.StatusFailed, nil
+		return RuntimeJobStatus(platformconst.StatusFailed), nil
 	case RuntimeJobEventCanceled:
-		return platformconst.StatusCanceled, nil
+		return RuntimeJobStatus(platformconst.StatusCanceled), nil
 	case RuntimeJobEventTerminalMetadataPatch:
-		return job.Status, nil
+		return RuntimeJobStatus(job.Status), nil
 	default:
 		return "", fmt.Errorf("unsupported runtime job transition event: %s", input.Event)
 	}
 }
 
-func validateRuntimeJobEventTransition(event RuntimeJobTransitionEvent, from, to string) error {
-	if from == to {
+func validateRuntimeJobEventTransition(event RuntimeJobTransitionEvent, from string, to RuntimeJobStatus) error {
+	toStatus := string(to)
+	if from == toStatus {
 		if event == RuntimeJobEventTerminalMetadataPatch && !isTerminalRuntimeJobStatus(from) {
 			return fmt.Errorf("runtime job terminal metadata patch requires terminal status, got %q", from)
 		}
@@ -132,38 +143,38 @@ func validateRuntimeJobEventTransition(event RuntimeJobTransitionEvent, from, to
 	}
 	switch event {
 	case RuntimeJobEventAdminPatch:
-		return validateRuntimeJobStatusTransition(from, to)
+		return validateRuntimeJobStatusTransition(from, toStatus)
 	case RuntimeJobEventDispatchStarted:
-		if from == platformconst.StatusQueued && to == platformconst.StatusProcessing {
+		if from == platformconst.StatusQueued && toStatus == platformconst.StatusProcessing {
 			return nil
 		}
 	case RuntimeJobEventProviderAccepted, RuntimeJobEventProviderProgress:
-		if (from == platformconst.StatusQueued || from == platformconst.StatusProcessing) && to == platformconst.StatusProcessing {
+		if (from == platformconst.StatusQueued || from == platformconst.StatusProcessing) && toStatus == platformconst.StatusProcessing {
 			return nil
 		}
 	case RuntimeJobEventRetryScheduled, RuntimeJobEventFallbackScheduled:
-		if from == platformconst.StatusProcessing && to == platformconst.StatusQueued {
+		if from == platformconst.StatusProcessing && toStatus == platformconst.StatusQueued {
 			return nil
 		}
 	case RuntimeJobEventCompleted:
-		if from == platformconst.StatusProcessing && to == platformconst.StatusCompleted {
+		if from == platformconst.StatusProcessing && toStatus == platformconst.StatusCompleted {
 			return nil
 		}
 	case RuntimeJobEventFailed:
-		if (from == platformconst.StatusQueued || from == platformconst.StatusProcessing) && to == platformconst.StatusFailed {
+		if (from == platformconst.StatusQueued || from == platformconst.StatusProcessing) && toStatus == platformconst.StatusFailed {
 			return nil
 		}
 	case RuntimeJobEventCanceled:
-		if (from == platformconst.StatusQueued || from == platformconst.StatusProcessing) && to == platformconst.StatusCanceled {
+		if (from == platformconst.StatusQueued || from == platformconst.StatusProcessing) && toStatus == platformconst.StatusCanceled {
 			return nil
 		}
 	case RuntimeJobEventTerminalMetadataPatch:
-		return fmt.Errorf("runtime job terminal metadata patch cannot change status: %q -> %q", from, to)
+		return fmt.Errorf("runtime job terminal metadata patch cannot change status: %q -> %q", from, toStatus)
 	}
 	if isTerminalRuntimeJobStatus(from) {
-		return fmt.Errorf("runtime job status %q is terminal, cannot transition to %q via %s", from, to, event)
+		return fmt.Errorf("runtime job status %q is terminal, cannot transition to %q via %s", from, toStatus, event)
 	}
-	return fmt.Errorf("invalid runtime job status transition via %s: %q -> %q", event, from, to)
+	return fmt.Errorf("invalid runtime job status transition via %s: %q -> %q", event, from, toStatus)
 }
 
 func applyRuntimeJobTransitionFields(job *models.RuntimeJob, input RuntimeJobTransitionInput) {
@@ -214,8 +225,8 @@ func applyRuntimeJobTransitionFields(job *models.RuntimeJob, input RuntimeJobTra
 	}
 }
 
-func applyRuntimeJobTransitionTimestamps(job *models.RuntimeJob, now time.Time, target string, event RuntimeJobTransitionEvent) {
-	switch target {
+func applyRuntimeJobTransitionTimestamps(job *models.RuntimeJob, now time.Time, target RuntimeJobStatus, event RuntimeJobTransitionEvent) {
+	switch string(target) {
 	case platformconst.StatusCompleted:
 		if job.CompletedAt == nil && event != RuntimeJobEventTerminalMetadataPatch {
 			job.CompletedAt = &now
@@ -260,7 +271,7 @@ func (s *Service) transitionRuntimeJob(job *models.RuntimeJob, input RuntimeJobT
 				switch {
 				case input.Event == RuntimeJobEventTerminalMetadataPatch:
 					// Intentionally patch metadata/stage fields on the locked terminal row.
-				case input.Event == RuntimeJobEventProviderProgress || input.Event == RuntimeJobEventProviderAccepted || (input.Event == RuntimeJobEventAdminPatch && (input.Status == "" || input.Status == locked.Status)):
+				case input.Event == RuntimeJobEventProviderProgress || input.Event == RuntimeJobEventProviderAccepted || (input.Event == RuntimeJobEventAdminPatch && (input.Status == "" || string(input.Status) == locked.Status)):
 					result = RuntimeJobTransitionResult{
 						FromStatus: locked.Status,
 						ToStatus:   locked.Status,
