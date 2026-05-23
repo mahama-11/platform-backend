@@ -115,6 +115,51 @@ func TestHandleProviderCallbackValidatesSignatureAndReturnsTerminalJob(t *testin
 	}
 }
 
+func TestHandleProviderCallbackPayloadProgressDoesNotDowngradeCompletedJob(t *testing.T) {
+	service, repo, queue := newRuntimeServiceForTest(t)
+	completedAt := time.Now().Add(-time.Minute)
+	job := &models.RuntimeJob{
+		ID:             "runtime-terminal-progress",
+		ProductCode:    "ecommerce",
+		TaskType:       "image_generation",
+		ProviderCode:   "comfyui_bridge",
+		ProviderJobID:  "provider-terminal-progress",
+		OrganizationID: "org-1",
+		Status:         "completed",
+		Stage:          "completed",
+		StageMessage:   "done",
+		OutputManifest: `{"ok":true}`,
+		SourceType:     "ecommerce_job",
+		SourceID:       "job-terminal-progress",
+		CompletedAt:    &completedAt,
+	}
+	if createErr := repo.CreateRuntimeJob(job); createErr != nil {
+		t.Fatalf("CreateRuntimeJob: %v", createErr)
+	}
+	expiresAt := time.Now().Add(time.Minute).Unix()
+	validSig := buildProviderCallbackSignature(runtimeSecurityForTest().EncryptionKey, job.ID, expiresAt)
+	if err := service.HandleProviderCallbackPayload("comfyui_bridge", job.ID, expiresAt, validSig, &NormalizedProviderCallbackPayload{
+		ProviderCode:  "comfyui_bridge",
+		ProviderJobID: "provider-terminal-progress",
+		Status:        "running",
+		Stage:         "provider_running",
+		StageMessage:  "late progress",
+		Progress:      50,
+	}); err != nil {
+		t.Fatalf("HandleProviderCallbackPayload: %v", err)
+	}
+	updated, err := repo.FindRuntimeJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("FindRuntimeJobByID: %v", err)
+	}
+	if updated.Status != "completed" || updated.Stage != "completed" || updated.StageMessage != "done" || updated.OutputManifest != `{"ok":true}` {
+		t.Fatalf("late provider progress downgraded/mutated terminal job: %+v", updated)
+	}
+	if len(queue.callbacks) != 0 {
+		t.Fatalf("stale terminal progress must not enqueue product callback, got %+v", queue.callbacks)
+	}
+}
+
 func TestCreateChargeSessionReusesExistingReservationKeyForSameBoundary(t *testing.T) {
 	service, _, _ := newRuntimeServiceForTest(t)
 
@@ -321,7 +366,6 @@ func TestRuntimeJobStateMachine_AllValidTransitions(t *testing.T) {
 		{"processing", "completed"},
 		{"processing", "failed"},
 		{"processing", "canceled"},
-		{"failed", "queued"}, // retry
 	}
 
 	for i, tc := range cases {

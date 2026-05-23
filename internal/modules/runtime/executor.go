@@ -161,15 +161,16 @@ func (s *Service) dispatchRuntimeJob(job *models.RuntimeJob, now time.Time) erro
 	if hydrateErr != nil {
 		return s.failRuntimeJob(job, "source_asset_invalid", "SOURCE_ASSET_INVALID", hydrateErr.Error(), now)
 	}
-	job.ProviderCode = providerCode
-	job.Status = platformconst.StatusProcessing
-	job.Stage = "dispatching"
-	job.StageMessage = "Dispatching to provider"
-	job.AttemptCount++
 	timeoutAt := now.Add(s.cfg.ExecutionTimeout)
-	job.TimeoutAt = &timeoutAt
-	saveErr := s.repo.SaveRuntimeJob(job)
-	if saveErr != nil {
+	if _, _, saveErr := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+		Event:            RuntimeJobEventDispatchStarted,
+		Now:              now,
+		ProviderCode:     providerCode,
+		Stage:            "dispatching",
+		StageMessage:     "Dispatching to provider",
+		IncrementAttempt: true,
+		TimeoutAt:        &timeoutAt,
+	}); saveErr != nil {
 		return saveErr
 	}
 	s.runtimeJobLogger(job).Info("runtime.dispatch.started")
@@ -213,11 +214,13 @@ func (s *Service) dispatchRuntimeJob(job *models.RuntimeJob, now time.Time) erro
 		ProviderMode:     job.ProviderMode,
 		ProviderResponse: providerResponse,
 	})
-	job.ProviderJobID = submission.ProviderJobID
-	job.Stage = defaultString(submission.Stage, "provider_accepted")
-	job.StageMessage = defaultString(submission.StageMessage, "Accepted by provider")
-	job.NextRetryAt = nil
-	if err := s.repo.SaveRuntimeJob(job); err != nil {
+	if _, _, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+		Event:         RuntimeJobEventProviderAccepted,
+		Now:           now,
+		ProviderJobID: submission.ProviderJobID,
+		Stage:         defaultString(submission.Stage, "provider_accepted"),
+		StageMessage:  defaultString(submission.StageMessage, "Accepted by provider"),
+	}); err != nil {
 		return err
 	}
 	s.runtimeJobLogger(job).
@@ -247,14 +250,17 @@ func (s *Service) handleDispatchError(job *models.RuntimeJob, err error, now tim
 	errorClass := classifyProviderErrorClass(err)
 	fromProvider := job.ProviderCode
 	if s.tryFallbackProvider(job, errorClass) {
-		job.Status = "queued"
-		job.Stage = "fallback_scheduled"
-		job.StageMessage = "Fallback provider scheduled"
-		job.NextRetryAt = nil
-		job.ErrorClass = errorClass
-		job.ErrorCode = "PROVIDER_FALLBACK_SCHEDULED"
-		job.ErrorMessage = err.Error()
-		if saveErr := s.repo.SaveRuntimeJob(job); saveErr != nil {
+		if _, _, saveErr := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+			Event:         RuntimeJobEventFallbackScheduled,
+			Now:           now,
+			Stage:         "fallback_scheduled",
+			StageMessage:  "Fallback provider scheduled",
+			ProviderCode:  job.ProviderCode,
+			RouteSnapshot: job.RouteSnapshot,
+			ErrorClass:    errorClass,
+			ErrorCode:     "PROVIDER_FALLBACK_SCHEDULED",
+			ErrorMessage:  err.Error(),
+		}); saveErr != nil {
 			return saveErr
 		}
 		s.runtimeJobLogger(job).
@@ -269,14 +275,16 @@ func (s *Service) handleDispatchError(job *models.RuntimeJob, err error, now tim
 		return s.failRuntimeJob(job, classifyProviderErrorClass(err), "PROVIDER_SUBMIT_FAILED", err.Error(), now)
 	}
 	retryAt := now.Add(s.cfg.RetryBackoff)
-	job.Status = "queued"
-	job.Stage = "retry_scheduled"
-	job.StageMessage = "Retry scheduled after provider failure"
-	job.NextRetryAt = &retryAt
-	job.ErrorClass = classifyProviderErrorClass(err)
-	job.ErrorCode = "PROVIDER_SUBMIT_FAILED"
-	job.ErrorMessage = err.Error()
-	if err := s.repo.SaveRuntimeJob(job); err != nil {
+	if _, _, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+		Event:        RuntimeJobEventRetryScheduled,
+		Now:          now,
+		Stage:        "retry_scheduled",
+		StageMessage: "Retry scheduled after provider failure",
+		NextRetryAt:  &retryAt,
+		ErrorClass:   classifyProviderErrorClass(err),
+		ErrorCode:    "PROVIDER_SUBMIT_FAILED",
+		ErrorMessage: err.Error(),
+	}); err != nil {
 		return err
 	}
 	s.runtimeJobLogger(job).
@@ -333,20 +341,26 @@ func (s *Service) pollRuntimeJob(job *models.RuntimeJob, now time.Time) error {
 		failErr := newNonRetryableProviderError(defaultString(result.ErrorMessage, "provider task failed"))
 		return s.handleDispatchError(job, failErr, now)
 	default:
+		_, transitionResult, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+			Event:        RuntimeJobEventProviderProgress,
+			Now:          now,
+			Stage:        defaultString(result.Stage, "provider_running"),
+			StageMessage: defaultString(result.StageMessage, "Provider is still processing"),
+		})
+		if err != nil {
+			return err
+		}
+		if transitionResult.Noop {
+			return nil
+		}
 		s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{
 			Status:        platformconst.StatusProcessing,
-			Stage:         defaultString(result.Stage, job.Stage),
-			StageMessage:  defaultString(result.StageMessage, job.StageMessage),
+			Stage:         job.Stage,
+			StageMessage:  job.StageMessage,
 			Progress:      &progress,
 			EtaSeconds:    &eta,
 			ProviderJobID: job.ProviderJobID,
 		})
-		job.Status = platformconst.StatusProcessing
-		job.Stage = defaultString(result.Stage, "provider_running")
-		job.StageMessage = defaultString(result.StageMessage, "Provider is still processing")
-		if err := s.repo.SaveRuntimeJob(job); err != nil {
-			return err
-		}
 		if s.queue != nil {
 			return s.queue.EnqueuePoll(job.ID, s.cfg.PollBackoff)
 		}
@@ -479,11 +493,7 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 			},
 		})
 	}
-	job.Status = platformconst.StatusCompleted
-	job.Stage = platformconst.StatusCompleted
-	job.StageMessage = completion.StageMessage
-	job.CompletedAt = &now
-	job.OutputManifest = mustMarshal(RuntimeOutputManifest{
+	outputManifest := mustMarshal(RuntimeOutputManifest{
 		Contract:     "platform.runtime.output.v1",
 		RuntimeJobID: job.ID,
 		ProductCode:  job.ProductCode,
@@ -499,7 +509,13 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 		Variants:     manifestVariants,
 		ProviderMeta: sanitizeProviderCallbackMetadata(completion.Metadata),
 	})
-	if err := s.saveRuntimeJobWithTerminalChargeBinding(job, platformconst.StatusCompleted); err != nil {
+	if _, _, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+		Event:          RuntimeJobEventCompleted,
+		Now:            now,
+		Stage:          platformconst.StatusCompleted,
+		StageMessage:   completion.StageMessage,
+		OutputManifest: outputManifest,
+	}); err != nil {
 		return err
 	}
 	s.runtimeJobLogger(job).
@@ -521,12 +537,15 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 		s.runtimeJobLogger(job).
 			With("variant_count", len(variants), "output_storage_category", outputCategory, "error", err).
 			Warn("runtime.results.notify_failed")
-		job.Stage = "callback_results_failed"
-		job.StageMessage = "Result callback failed; runtime output remains available"
-		job.ErrorClass = "callback_failed"
-		job.ErrorCode = "PRODUCT_RESULT_CALLBACK_FAILED"
-		job.ErrorMessage = err.Error()
-		if saveErr := s.repo.SaveRuntimeJob(job); saveErr != nil {
+		if _, _, saveErr := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+			Event:        RuntimeJobEventTerminalMetadataPatch,
+			Now:          time.Now(),
+			Stage:        "callback_results_failed",
+			StageMessage: "Result callback failed; runtime output remains available",
+			ErrorClass:   "callback_failed",
+			ErrorCode:    "PRODUCT_RESULT_CALLBACK_FAILED",
+			ErrorMessage: err.Error(),
+		}); saveErr != nil {
 			return saveErr
 		}
 		return nil
@@ -574,15 +593,15 @@ func (s *Service) outputStorageCategory(job *models.RuntimeJob) string {
 }
 
 func (s *Service) failRuntimeJob(job *models.RuntimeJob, errorClass, errorCode, message string, now time.Time) error {
-	job.Status = platformconst.StatusFailed
-	job.Stage = platformconst.StatusFailed
-	job.StageMessage = message
-	job.ErrorClass = errorClass
-	job.ErrorCode = errorCode
-	job.ErrorMessage = message
-	job.CompletedAt = &now
-	job.NextRetryAt = nil
-	if err := s.saveRuntimeJobWithTerminalChargeBinding(job, platformconst.StatusFailed); err != nil {
+	if _, _, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+		Event:        RuntimeJobEventFailed,
+		Now:          now,
+		Stage:        platformconst.StatusFailed,
+		StageMessage: message,
+		ErrorClass:   errorClass,
+		ErrorCode:    errorCode,
+		ErrorMessage: message,
+	}); err != nil {
 		return err
 	}
 	s.runtimeJobLogger(job).
