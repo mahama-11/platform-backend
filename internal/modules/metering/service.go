@@ -870,6 +870,12 @@ func (s *Service) findActiveRateCard(tx *gorm.DB, targetType, targetID string, a
 }
 
 func (s *Service) quotaAvailable(tx *gorm.DB, subjectType, subjectID, billableItemCode string) (int64, error) {
+	var lockedRows []models.QuotaLedger
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("billing_subject_type = ? AND billing_subject_id = ? AND billable_item_code = ?", subjectType, subjectID, billableItemCode).
+		Find(&lockedRows).Error; err != nil {
+		return 0, err
+	}
 	granted, err := s.sumQuotaDirection(tx, subjectType, subjectID, billableItemCode, platformconst.LedgerDirectionGrant)
 	if err != nil {
 		return 0, err

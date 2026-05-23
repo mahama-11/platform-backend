@@ -55,6 +55,42 @@ func TestCreateRuntimeJobEnqueuesAndSupportsIdempotency(t *testing.T) {
 	}
 }
 
+func TestCreateRuntimeJobScopesIdempotencyReplayByBoundary(t *testing.T) {
+	service, _, queue := newRuntimeServiceForTest(t)
+
+	first, err := service.CreateRuntimeJob(CreateRuntimeJobInput{
+		ProductCode:    "ecommerce",
+		TaskType:       "image_generation",
+		ProviderMode:   "async",
+		OrganizationID: "org-1",
+		SourceType:     "ecommerce_job",
+		SourceID:       "job-1",
+		IdempotencyKey: "idem-cross-boundary",
+	})
+	if err != nil {
+		t.Fatalf("CreateRuntimeJob first call: %v", err)
+	}
+
+	second, err := service.CreateRuntimeJob(CreateRuntimeJobInput{
+		ProductCode:    "menu_ai",
+		TaskType:       "image_generation",
+		ProviderMode:   "async",
+		OrganizationID: "org-2",
+		SourceType:     "menu_job",
+		SourceID:       "job-2",
+		IdempotencyKey: "idem-cross-boundary",
+	})
+	if err != nil {
+		t.Fatalf("same idempotency key in a different boundary must be allowed: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatalf("expected independent job for scoped idempotency, got same id %s", second.ID)
+	}
+	if len(queue.dispatches) != 2 {
+		t.Fatalf("independent scoped idempotency jobs must both enqueue, got %+v", queue.dispatches)
+	}
+}
+
 func TestHandleProviderCallbackValidatesSignatureAndReturnsTerminalJob(t *testing.T) {
 	service, repo, _ := newRuntimeServiceForTest(t)
 	job := &models.RuntimeJob{

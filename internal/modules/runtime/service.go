@@ -77,6 +77,8 @@ type UpdateRuntimeJobInput struct {
 	NextRetryAt    string `json:"next_retry_at"`
 }
 
+var ErrRuntimeJobIdempotencyConflict = errors.New("runtime job idempotency key conflicts with a different request boundary")
+
 type RecordRuntimeAttemptInput struct {
 	Status           string `json:"status" binding:"required"`
 	ErrorClass       string `json:"error_class"`
@@ -197,7 +199,7 @@ func (s *Service) ListProviderDefinitions() ([]models.RuntimeProviderDefinition,
 
 func (s *Service) CreateRuntimeJob(input CreateRuntimeJobInput) (*models.RuntimeJob, error) {
 	if input.IdempotencyKey != "" {
-		if existing, err := s.repo.FindRuntimeJobByIdempotencyKey(input.IdempotencyKey); err == nil {
+		if existing, err := s.repo.FindRuntimeJobByIdempotencyKey(input.ProductCode, input.OrganizationID, input.SourceType, input.SourceID, input.TaskType, input.IdempotencyKey); err == nil {
 			return existing, nil
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err

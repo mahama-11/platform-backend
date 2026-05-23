@@ -9,6 +9,7 @@ import (
 	"platform-service/internal/models"
 	access "platform-service/internal/modules/access"
 	"platform-service/internal/repository"
+	"platform-service/pkg/platformconst"
 	"platform-service/pkg/utils"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -63,6 +64,7 @@ type UserProfile struct {
 	OrgRole         string             `json:"org_role"`
 	OrgID           string             `json:"org_id"`
 	LastActiveOrgID string             `json:"last_active_org_id"`
+	IsPlatformAdmin bool               `json:"is_platform_admin"`
 	PlanID          string             `json:"plan_id"`
 	Status          string             `json:"status"`
 	Permissions     []string           `json:"permissions"`
@@ -343,7 +345,7 @@ func (s *Service) ListUsers(input ListUsersInput) (*UserDirectoryResult, error) 
 			Status:          user.Status,
 			CurrentOrgID:    user.CurrentOrgID,
 			LastActiveOrgID: user.LastActiveOrgID,
-			IsPlatformAdmin: user.IsPlatformAdmin || hasPlatformAdminRole(user, roleByUserOrg),
+			IsPlatformAdmin: user.IsPlatformAdmin,
 			LastLoginAt:     user.LastLoginAt,
 			CreatedAt:       user.CreatedAt,
 			UpdatedAt:       user.UpdatedAt,
@@ -512,18 +514,6 @@ func (s *Service) UpdateProfile(userID string, input UpdateProfileInput) (*UserP
 	return s.buildProfile(s.repo.DB(), *refresh, orgID)
 }
 
-func hasPlatformAdminRole(user models.User, roleByUserOrg map[string]string) bool {
-	if user.OrgRole == "owner" {
-		return true
-	}
-	for key, role := range roleByUserOrg {
-		if strings.HasPrefix(key, user.ID+"::") && role == "owner" {
-			return true
-		}
-	}
-	return false
-}
-
 func (s *Service) findDirectoryRecord(userID string) (*UserDirectoryRecord, error) {
 	result, err := s.ListUsers(ListUsersInput{Limit: 200, Offset: 0})
 	if err != nil {
@@ -569,6 +559,9 @@ func (s *Service) buildProfile(db *gorm.DB, user models.User, orgID string) (*Us
 	if err != nil {
 		return nil, err
 	}
+	if user.IsPlatformAdmin && !containsString(permissions, platformconst.PermissionPlatformAdmin) {
+		permissions = append(permissions, platformconst.PermissionPlatformAdmin)
+	}
 
 	var memberships []models.OrganizationMember
 	if err := db.Where("user_id = ? AND status = ?", user.ID, "active").Find(&memberships).Error; err != nil {
@@ -593,7 +586,16 @@ func (s *Service) buildProfile(db *gorm.DB, user models.User, orgID string) (*Us
 	}
 	return &UserProfile{
 		ID: user.ID, Email: user.Email, FullName: user.FullName, AvatarURL: user.AvatarURL,
-		Role: user.Role, OrgRole: roleToUse, OrgID: orgID, LastActiveOrgID: user.LastActiveOrgID,
+		Role: user.Role, OrgRole: roleToUse, OrgID: orgID, LastActiveOrgID: user.LastActiveOrgID, IsPlatformAdmin: user.IsPlatformAdmin,
 		PlanID: org.PlanID, Status: user.Status, Permissions: permissions, Orgs: orgsOut,
 	}, nil
+}
+
+func containsString(items []string, needle string) bool {
+	for _, item := range items {
+		if item == needle {
+			return true
+		}
+	}
+	return false
 }

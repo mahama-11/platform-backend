@@ -34,7 +34,7 @@ var defaultRoles = []models.Role{
 }
 
 var defaultRolePermissions = map[string][]string{
-	"owner":     {"org.read", "org.update", "org.delete", "org.switch", "team.read", "team.invite", "team.write", "billing.read", "billing.write", "org.usage.read", "org.audit", "logs.read", "oauth.read", "oauth.write", "platform.admin"},
+	"owner":     {"org.read", "org.update", "org.delete", "org.switch", "team.read", "team.invite", "team.write", "billing.read", "billing.write", "org.usage.read", "org.audit", "logs.read", "oauth.read", "oauth.write"},
 	"admin":     {"org.read", "org.update", "org.switch", "team.read", "team.invite", "team.write", "billing.read", "billing.write", "org.usage.read", "org.audit", "logs.read", "oauth.read", "oauth.write"},
 	"developer": {"org.read", "org.switch", "team.read", "org.usage.read", "logs.read"},
 	"viewer":    {"org.read", "org.switch", "team.read"},

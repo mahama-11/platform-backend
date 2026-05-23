@@ -182,6 +182,10 @@ GET /internal/v1/wallet/accounts?billing_subject_type=organization&billing_subje
   - Read-only product-scoped runtime capability matrix.
   - Required query: `product_code`; optional query: `task_type`.
   - Returns known P0 runtime task types (`image_understanding`, `ocr`, `image_generation`, `image_inpainting`, `video_keyframe`) with provider/callback/storage/billing readiness and stable reason codes such as `contract-needed`, `provider_binding_missing`, `storage_binding_missing`, and `billable_item_missing`.
+- `POST /internal/v1/runtime/jobs`
+  - Creates a product-scoped runtime job and enqueues dispatch atomically.
+  - Idempotency is scoped to `product_code + organization_id + source_type + source_id + task_type + idempotency_key`; the same client key may be reused by a different product/org/source/task boundary without colliding.
+  - A replay within the same scope returns the existing job. A semantic boundary conflict detected by older clients or stale storage returns HTTP `409` with `RUNTIME_JOB_IDEMPOTENCY_CONFLICT`.
 - `POST /internal/v1/incentives/rewards`
 - `GET /internal/v1/incentives/referral-programs`
 - `POST /internal/v1/incentives/referral-programs`

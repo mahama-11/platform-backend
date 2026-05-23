@@ -57,16 +57,16 @@ type StorageBinding struct {
 
 type RuntimeJob struct {
 	ID              string     `gorm:"primaryKey;type:varchar(64)" json:"id"`
-	ProductCode     string     `gorm:"index;not null" json:"product_code"`
-	TaskType        string     `gorm:"index;not null" json:"task_type"`
+	ProductCode     string     `gorm:"index;uniqueIndex:idx_runtime_jobs_idempotency_scope;not null" json:"product_code"`
+	TaskType        string     `gorm:"index;uniqueIndex:idx_runtime_jobs_idempotency_scope;not null" json:"task_type"`
 	ProviderCode    string     `gorm:"index" json:"provider_code"`
 	ProviderMode    string     `gorm:"index;not null" json:"provider_mode"`
 	ProviderJobID   string     `gorm:"index" json:"provider_job_id"`
-	OrganizationID  string     `gorm:"index;not null" json:"organization_id"`
+	OrganizationID  string     `gorm:"index;uniqueIndex:idx_runtime_jobs_idempotency_scope;not null" json:"organization_id"`
 	UserID          string     `gorm:"index" json:"user_id"`
-	SourceType      string     `gorm:"index;not null" json:"source_type"`
-	SourceID        string     `gorm:"index;not null" json:"source_id"`
-	IdempotencyKey  *string    `gorm:"uniqueIndex" json:"idempotency_key,omitempty"`
+	SourceType      string     `gorm:"index;uniqueIndex:idx_runtime_jobs_idempotency_scope;not null" json:"source_type"`
+	SourceID        string     `gorm:"index;uniqueIndex:idx_runtime_jobs_idempotency_scope;not null" json:"source_id"`
+	IdempotencyKey  *string    `gorm:"uniqueIndex:idx_runtime_jobs_idempotency_scope" json:"idempotency_key,omitempty"`
 	ChargeSessionID string     `gorm:"index" json:"charge_session_id"`
 	Status          string     `gorm:"index;not null" json:"status"`
 	Stage           string     `gorm:"index" json:"stage"`

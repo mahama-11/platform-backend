@@ -138,6 +138,13 @@ func Steps() []Step {
 				return db.AutoMigrate(&models.AuditLog{})
 			},
 		},
+		{
+			Version: 202605230001,
+			Name:    "scope_runtime_job_idempotency_key",
+			Up: func(db *gorm.DB) error {
+				return scopeRuntimeJobIdempotencyKey(db)
+			},
+		},
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Version < steps[j].Version })
 	return steps
@@ -225,4 +232,19 @@ func appliedVersions(db *gorm.DB) (map[int64]struct{}, error) {
 		out[item.Version] = struct{}{}
 	}
 	return out, nil
+}
+
+func scopeRuntimeJobIdempotencyKey(db *gorm.DB) error {
+	// Older schemas used a global unique index on runtime_jobs.idempotency_key.
+	// Runtime jobs are shared Platform primitives, so idempotency must be scoped
+	// to the request boundary; otherwise one product/org/source can block another
+	// legitimate job that happens to reuse a client-generated key.
+	for _, name := range []string{"idx_runtime_jobs_idempotency_key", "uni_runtime_jobs_idempotency_key"} {
+		if db.Migrator().HasIndex(&models.RuntimeJob{}, name) {
+			if err := db.Migrator().DropIndex(&models.RuntimeJob{}, name); err != nil {
+				return err
+			}
+		}
+	}
+	return db.AutoMigrate(&models.RuntimeJob{})
 }
