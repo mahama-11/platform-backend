@@ -1851,7 +1851,7 @@ func (r *templateOpsStorageAssetRepo) FindStorageAssetBySource(productCode, cate
 
 func buildAssetChecks(input UpsertTemplateInput, finder storageAssetFinder) ([]CSVImportPreviewAssetCheck, int) {
 	checks := make([]CSVImportPreviewAssetCheck, 0)
-	if finder == nil || input.ProductCode != "ecommerce" {
+	if finder == nil {
 		return checks, 0
 	}
 	detail := input.DetailRaw
