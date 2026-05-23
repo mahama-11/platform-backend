@@ -3,6 +3,8 @@ package wallet
 import (
 	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -381,9 +383,97 @@ func TestGrantCycleAllowanceAndRunLifecycleOnce(t *testing.T) {
 	}
 }
 
+func TestPostLedger_ConcurrentDebitDoesNotOverdrawSharedSQLite(t *testing.T) {
+	// This is a normal go test regression using SQLite shared-cache transactions because
+	// this repo does not provide an external-service-free Postgres harness. It still
+	// exercises independent DB connections, transaction retry, and the production debit
+	// invariant: successful debits cannot exceed the seeded account balance.
+	service := newWalletTestService(t)
+	if _, _, err := service.PostLedger(PostWalletLedgerInput{
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-concurrent-wallet",
+		AssetCode:          "CONCURRENT_CREDIT",
+		AssetType:          platformconst.WalletAssetTypeCredit,
+		Direction:          platformconst.LedgerDirectionCredit,
+		Amount:             50,
+		Reason:             "seed",
+		ReferenceType:      "test",
+		ReferenceID:        "seed-concurrent-wallet",
+	}); err != nil {
+		t.Fatalf("seed wallet: %v", err)
+	}
+
+	const workers = 10
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			var err error
+			for attempt := 0; attempt < 20; attempt++ {
+				_, _, err = service.PostLedger(PostWalletLedgerInput{
+					BillingSubjectType: "organization",
+					BillingSubjectID:   "org-concurrent-wallet",
+					AssetCode:          "CONCURRENT_CREDIT",
+					AssetType:          platformconst.WalletAssetTypeCredit,
+					Direction:          platformconst.LedgerDirectionDebit,
+					Amount:             10,
+					Reason:             "concurrent_debit",
+					ReferenceType:      "test",
+					ReferenceID:        fmt.Sprintf("debit-%02d", i),
+				})
+				if err == nil || errors.Is(err, ErrInsufficientWalletBalance) || !sqliteBusy(err) {
+					break
+				}
+				time.Sleep(time.Duration(attempt+1) * time.Millisecond)
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	var success, insufficient int
+	for err := range errs {
+		if err == nil {
+			success++
+			continue
+		}
+		if errors.Is(err, ErrInsufficientWalletBalance) {
+			insufficient++
+			continue
+		}
+		t.Fatalf("unexpected concurrent debit error: %v", err)
+	}
+	if success != 5 || insufficient != 5 {
+		t.Fatalf("success=%d insufficient=%d, want 5/5", success, insufficient)
+	}
+
+	account, err := service.repo.FindWalletAccount("organization", "org-concurrent-wallet", "CONCURRENT_CREDIT")
+	if err != nil {
+		t.Fatalf("load account: %v", err)
+	}
+	if account.Balance != 0 {
+		t.Fatalf("account balance = %d, want 0", account.Balance)
+	}
+}
+
+func sqliteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked")
+}
+
 func newWalletTestService(t *testing.T) *Service {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", t.Name())
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared&_busy_timeout=5000", t.Name())
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -530,7 +620,7 @@ func TestDebitAccountTx_InsufficientBalance(t *testing.T) {
 		BillingSubjectType: account.BillingSubjectType, BillingSubjectID: account.BillingSubjectID,
 		AssetCode: account.AssetCode, AssetType: account.AssetType,
 		LifecycleType: platformconst.WalletLifecycleExpiring,
-		Balance: 50, ExpiresAt: ptrTime(now.Add(24 * time.Hour)),
+		Balance:       50, ExpiresAt: ptrTime(now.Add(24 * time.Hour)),
 		Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := service.repo.CreateWalletBucket(bucket); err != nil {
@@ -821,7 +911,7 @@ func TestDebitByPriorityTx_MultiAccountPriority(t *testing.T) {
 			BillingSubjectType: "organization", BillingSubjectID: "org-prio",
 			AssetCode: a.assetCode, AssetType: a.assetType,
 			LifecycleType: platformconst.WalletLifecyclePermanent,
-			Balance: a.balance, Status: platformconst.StatusActive,
+			Balance:       a.balance, Status: platformconst.StatusActive,
 			CreatedAt: now, UpdatedAt: now,
 		}
 		if err := service.repo.CreateWalletBucket(bucket); err != nil {
@@ -907,7 +997,7 @@ func TestSpendableCreditsBalance_MultiAccount(t *testing.T) {
 			BillingSubjectType: "organization", BillingSubjectID: "org-spend",
 			AssetCode: s.assetCode, AssetType: platformconst.WalletAssetTypeCredit,
 			LifecycleType: platformconst.WalletLifecycleExpiring,
-			Balance: s.balance, ExpiresAt: ptrTime(now.Add(72 * time.Hour)),
+			Balance:       s.balance, ExpiresAt: ptrTime(now.Add(72 * time.Hour)),
 			Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now,
 		}
 		if err := service.repo.CreateWalletBucket(bucket); err != nil {
@@ -1094,7 +1184,7 @@ func TestExpireWalletBuckets_SkipsNonExpiredBuckets(t *testing.T) {
 		BillingSubjectType: account.BillingSubjectType, BillingSubjectID: account.BillingSubjectID,
 		AssetCode: account.AssetCode, AssetType: account.AssetType,
 		LifecycleType: platformconst.WalletLifecycleExpiring,
-		Balance: 100, ExpiresAt: ptrTime(now.Add(48 * time.Hour)),
+		Balance:       100, ExpiresAt: ptrTime(now.Add(48 * time.Hour)),
 		Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := service.repo.CreateWalletBucket(futureBucket); err != nil {

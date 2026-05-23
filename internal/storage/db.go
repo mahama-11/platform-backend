@@ -262,6 +262,7 @@ func autoMigrate(db *gorm.DB) error {
 		&models.PackageCapabilityPolicy{},
 		&models.CapabilityGrant{},
 		&models.QuotaLedger{},
+		&models.QuotaBalance{},
 		&models.CreditsLedger{},
 		&models.BillingLedger{},
 		&models.ResourceReservation{},
