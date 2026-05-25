@@ -13,6 +13,25 @@ REMOTE_BASE="${REMOTE_DIR%/*}"
 LOCAL_DEV_DIR="artifacts/dev"
 
 remote() { ssh -i "$SSH_KEY" "$REMOTE" "$1"; }
+require_clean_commit() {
+  git rev-parse --verify HEAD >/dev/null || { echo "BUILD_PREFLIGHT_FAIL: missing git commit" >&2; exit 1; }
+  dirty="$(git status --porcelain=v1)"
+  if [ -n "$dirty" ]; then
+    echo "BUILD_PREFLIGHT_FAIL: working tree must be clean; commit or stash changes before build/deploy" >&2
+    printf '%s
+' "$dirty" >&2
+    exit 1
+  fi
+  GIT_SHA="$(git rev-parse HEAD)"
+  GIT_SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+  GIT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+  BUILD_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "BUILD_PREFLIGHT_PASS branch=$GIT_BRANCH sha=$GIT_SHA clean=true"
+}
+image_labels() {
+  printf '%s
+'     --label "org.opencontainers.image.revision=$GIT_SHA"     --label "org.opencontainers.image.source=platform-backend"     --label "org.opencontainers.image.created=$BUILD_CREATED"     --label "org.opencontainers.image.version=$GIT_SHORT_SHA"     --label "com.agent.git.branch=$GIT_BRANCH"
+}
 health_wait() {
   NAME="$1"; LIM="$2"
   remote "for i in \$(seq 1 $LIM); do s=\$(docker inspect -f '{{.State.Health.Status}}' $NAME 2>/dev/null || echo none); [ \"\$s\" = healthy ] && echo HEALTHY && exit 0; sleep 2; done; echo HEALTH_CHECK_FAILED; exit 1"
@@ -28,13 +47,14 @@ send_dev_files() {
 
 case "$CMD" in
   dev)
+    require_clean_commit
     DEV_TAG="${DEV_TAG:-dev}"
     IMG="$IMAGE_NAME:$DEV_TAG"
     mkdir -p "$LOCAL_DEV_DIR"
     OUT="$LOCAL_DEV_DIR/${IMAGE_NAME##*/}_dev_$TS.tar.gz"
     REMOTE_OUT="$REMOTE_BASE/$(basename "$OUT")"
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o platform-service-linux ./cmd/server
-    docker buildx build --platform linux/amd64 -f Dockerfile.dev -t "$IMG" .
+    docker buildx build --platform linux/amd64 $(image_labels) -f Dockerfile.dev -t "$IMG" .
     docker save "$IMG" | gzip > "$OUT"
     send_dev_files "$OUT"
     remote "docker load -i $REMOTE_OUT"
