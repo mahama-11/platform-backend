@@ -21,6 +21,8 @@ type comfyUIBridgeProvider struct {
 	client *http.Client
 }
 
+const comfyTransparentPNGBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
+
 func newComfyUIBridgeProvider(name string, cfg config.ComfyUIBridgeConfig) GenerationProvider {
 	timeout := cfg.RequestTimeout
 	if timeout <= 0 {
@@ -281,7 +283,7 @@ func validateComfyUnderstandingImagePayload(dataURL, fallbackMime string) error 
 }
 
 func (p *comfyUIBridgeProvider) buildComfyMultiImagePayload(assets []ProviderSourceAsset) ([]string, error) {
-	images := make([]string, 0, len(assets))
+	images := make([]string, 0, 4)
 	for _, asset := range assets {
 		payload, err := p.buildComfyImagePayload([]ProviderSourceAsset{asset})
 		if err != nil || payload == "" {
@@ -292,7 +294,13 @@ func (p *comfyUIBridgeProvider) buildComfyMultiImagePayload(assets []ProviderSou
 			return images, nil
 		}
 	}
-	return nil, newNonRetryableProviderError(fmt.Sprintf("comfyui bridge multi-image generation requires exactly 4 usable images, got %d", len(images)))
+	if len(images) == 0 {
+		return nil, newNonRetryableProviderError("no usable image payload found for comfyui bridge multi-image generation")
+	}
+	for len(images) < 4 {
+		images = append(images, comfyTransparentPNGBase64)
+	}
+	return images, nil
 }
 
 func (p *comfyUIBridgeProvider) normalizeResultImage(value string) string {
