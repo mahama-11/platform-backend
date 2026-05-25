@@ -5,6 +5,7 @@ import (
 	"platform-service/internal/middleware"
 	access "platform-service/internal/modules/access"
 	assetstorage "platform-service/internal/modules/assetstorage"
+	audit "platform-service/internal/modules/audit"
 	catalog "platform-service/internal/modules/catalog"
 	commercial "platform-service/internal/modules/commercial"
 	control "platform-service/internal/modules/control"
@@ -36,6 +37,7 @@ func New(
 	meteringHandler *metering.Handler,
 	runtimeHandler *runtime.Handler,
 	templateOpsHandler *templateops.Handler,
+	auditHandler *audit.Handler,
 	identityService *identity.Service,
 ) *gin.Engine {
 	gin.SetMode(cfg.GinMode)
@@ -280,6 +282,13 @@ func New(
 			templateOpsGroup.GET("/export/csv", templateOpsHandler.ExportCSV)
 			templateOpsGroup.GET("/export/csv-template", templateOpsHandler.ExportCSVTemplate)
 			templateOpsGroup.GET("/export/csv-real-sample", templateOpsHandler.ExportPreparedRealImportCSV)
+		}
+
+		auditGroup := v1.Group("/audit")
+		auditGroup.Use(middleware.JWTAuth(identityService, cfg.Security.JWTSecret), middleware.RequirePermission("platform.admin"))
+		{
+			auditGroup.GET("/logs", auditHandler.ListLogs)
+			auditGroup.GET("/logs/:auditID", auditHandler.GetLog)
 		}
 
 		opsGroup := v1.Group("/ops")

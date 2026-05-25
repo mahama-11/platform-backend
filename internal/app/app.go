@@ -125,6 +125,7 @@ func New(configFile string) (*App, error) {
 		metering.NewHandler(meteringService, auditService),
 		runtime.NewHandler(runtimeService, auditService),
 		templateops.NewHandler(templateOpsService),
+		audit.NewHandler(auditService),
 		identityService,
 	)
 	return app, nil
