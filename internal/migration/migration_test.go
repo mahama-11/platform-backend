@@ -32,6 +32,29 @@ func TestMigrationLifecycle(t *testing.T) {
 	}
 }
 
+func TestRuntimeJobIdempotencyMigrationScopesUniqueKey(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := Up(db); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	key := "client-key"
+	base := models.RuntimeJob{ID: "job-1", ProductCode: "ecommerce", OrganizationID: "org-1", SourceType: "workflow", SourceID: "src-1", TaskType: "image_generation", ProviderMode: "async", Status: "queued", IdempotencyKey: &key}
+	if err := db.Create(&base).Error; err != nil {
+		t.Fatalf("create base job: %v", err)
+	}
+	otherScope := models.RuntimeJob{ID: "job-2", ProductCode: "menu", OrganizationID: "org-2", SourceType: "workflow", SourceID: "src-2", TaskType: "image_generation", ProviderMode: "async", Status: "queued", IdempotencyKey: &key}
+	if err := db.Create(&otherScope).Error; err != nil {
+		t.Fatalf("same idempotency key in different scope should be allowed: %v", err)
+	}
+	duplicateScope := models.RuntimeJob{ID: "job-3", ProductCode: base.ProductCode, OrganizationID: base.OrganizationID, SourceType: base.SourceType, SourceID: base.SourceID, TaskType: base.TaskType, ProviderMode: "async", Status: "queued", IdempotencyKey: &key}
+	if err := db.Create(&duplicateScope).Error; err == nil {
+		t.Fatalf("duplicate scoped idempotency key should fail")
+	}
+}
+
 func TestBackfillCreditsLedgerIntoWallet(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
 	if err != nil {

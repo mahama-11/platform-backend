@@ -96,6 +96,10 @@ func (h *Handler) CreateRuntimeJob(c *gin.Context) {
 	item, err := h.service.CreateRuntimeJob(req)
 	if err != nil {
 		span.RecordError(err)
+		if errors.Is(err, ErrRuntimeJobIdempotencyConflict) {
+			response.WriteObservedSemanticError(c, err, response.CodeConflict, "runtime job idempotency key conflicts with a different request boundary", "RUNTIME_JOB_IDEMPOTENCY_CONFLICT", "Use idempotency keys only within the same product, organization, source, and task boundary.")
+			return
+		}
 		response.WriteObservedSemanticError(c, err, response.CodeInternalError, "failed to create runtime job", "RUNTIME_JOB_CREATE_FAILED", "Check platform logs with request_id, product_code, source_id, and task_type to identify the job creation failure.")
 		return
 	}

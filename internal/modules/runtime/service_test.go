@@ -55,6 +55,42 @@ func TestCreateRuntimeJobEnqueuesAndSupportsIdempotency(t *testing.T) {
 	}
 }
 
+func TestCreateRuntimeJobScopesIdempotencyReplayByBoundary(t *testing.T) {
+	service, _, queue := newRuntimeServiceForTest(t)
+
+	first, err := service.CreateRuntimeJob(CreateRuntimeJobInput{
+		ProductCode:    "ecommerce",
+		TaskType:       "image_generation",
+		ProviderMode:   "async",
+		OrganizationID: "org-1",
+		SourceType:     "ecommerce_job",
+		SourceID:       "job-1",
+		IdempotencyKey: "idem-cross-boundary",
+	})
+	if err != nil {
+		t.Fatalf("CreateRuntimeJob first call: %v", err)
+	}
+
+	second, err := service.CreateRuntimeJob(CreateRuntimeJobInput{
+		ProductCode:    "menu_ai",
+		TaskType:       "image_generation",
+		ProviderMode:   "async",
+		OrganizationID: "org-2",
+		SourceType:     "menu_job",
+		SourceID:       "job-2",
+		IdempotencyKey: "idem-cross-boundary",
+	})
+	if err != nil {
+		t.Fatalf("same idempotency key in a different boundary must be allowed: %v", err)
+	}
+	if second.ID == first.ID {
+		t.Fatalf("expected independent job for scoped idempotency, got same id %s", second.ID)
+	}
+	if len(queue.dispatches) != 2 {
+		t.Fatalf("independent scoped idempotency jobs must both enqueue, got %+v", queue.dispatches)
+	}
+}
+
 func TestHandleProviderCallbackValidatesSignatureAndReturnsTerminalJob(t *testing.T) {
 	service, repo, _ := newRuntimeServiceForTest(t)
 	job := &models.RuntimeJob{
@@ -76,6 +112,51 @@ func TestHandleProviderCallbackValidatesSignatureAndReturnsTerminalJob(t *testin
 	}
 	if err := service.HandleProviderCallback("ecommerce_internal", job.ID, expiresAt, "bad-signature"); err == nil {
 		t.Fatalf("expected invalid signature failure")
+	}
+}
+
+func TestHandleProviderCallbackPayloadProgressDoesNotDowngradeCompletedJob(t *testing.T) {
+	service, repo, queue := newRuntimeServiceForTest(t)
+	completedAt := time.Now().Add(-time.Minute)
+	job := &models.RuntimeJob{
+		ID:             "runtime-terminal-progress",
+		ProductCode:    "ecommerce",
+		TaskType:       "image_generation",
+		ProviderCode:   "comfyui_bridge",
+		ProviderJobID:  "provider-terminal-progress",
+		OrganizationID: "org-1",
+		Status:         "completed",
+		Stage:          "completed",
+		StageMessage:   "done",
+		OutputManifest: `{"ok":true}`,
+		SourceType:     "ecommerce_job",
+		SourceID:       "job-terminal-progress",
+		CompletedAt:    &completedAt,
+	}
+	if createErr := repo.CreateRuntimeJob(job); createErr != nil {
+		t.Fatalf("CreateRuntimeJob: %v", createErr)
+	}
+	expiresAt := time.Now().Add(time.Minute).Unix()
+	validSig := buildProviderCallbackSignature(runtimeSecurityForTest().EncryptionKey, job.ID, expiresAt)
+	if err := service.HandleProviderCallbackPayload("comfyui_bridge", job.ID, expiresAt, validSig, &NormalizedProviderCallbackPayload{
+		ProviderCode:  "comfyui_bridge",
+		ProviderJobID: "provider-terminal-progress",
+		Status:        "running",
+		Stage:         "provider_running",
+		StageMessage:  "late progress",
+		Progress:      50,
+	}); err != nil {
+		t.Fatalf("HandleProviderCallbackPayload: %v", err)
+	}
+	updated, err := repo.FindRuntimeJobByID(job.ID)
+	if err != nil {
+		t.Fatalf("FindRuntimeJobByID: %v", err)
+	}
+	if updated.Status != "completed" || updated.Stage != "completed" || updated.StageMessage != "done" || updated.OutputManifest != `{"ok":true}` {
+		t.Fatalf("late provider progress downgraded/mutated terminal job: %+v", updated)
+	}
+	if len(queue.callbacks) != 0 {
+		t.Fatalf("stale terminal progress must not enqueue product callback, got %+v", queue.callbacks)
 	}
 }
 
@@ -285,7 +366,6 @@ func TestRuntimeJobStateMachine_AllValidTransitions(t *testing.T) {
 		{"processing", "completed"},
 		{"processing", "failed"},
 		{"processing", "canceled"},
-		{"failed", "queued"}, // retry
 	}
 
 	for i, tc := range cases {

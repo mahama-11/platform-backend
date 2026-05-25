@@ -26,7 +26,7 @@ func newIdentityTestService(t *testing.T) (*Service, *repository.CoreRepository)
 		t.Fatalf("auto migrate: %v", err)
 	}
 	repo := repository.NewCoreRepository(db)
-	if err := db.Create(&models.RolePermission{RoleID: "owner", PermissionID: "platform.admin"}).Error; err != nil {
+	if err := db.Create(&models.RolePermission{RoleID: "owner", PermissionID: "org.read"}).Error; err != nil {
 		t.Fatalf("seed role permission: %v", err)
 	}
 	cfg := config.Config{}
@@ -100,4 +100,70 @@ func TestIdentityServiceLoginWithInvalidStoredPasswordReturnsInvalidCredentials(
 	if _, err := service.Login(LoginInput{Email: "legacy@example.com", Password: "secret123"}); err != ErrInvalidCredentials {
 		t.Fatalf("expected ErrInvalidCredentials, got %v", err)
 	}
+}
+
+func TestIdentityServicePlatformAdminFlagGrantsPlatformPermission(t *testing.T) {
+	service, repo := newIdentityTestService(t)
+	org := models.Organization{ID: "org-admin", Name: "Admin Org", PlanID: "starter", Status: "active"}
+	if err := repo.DB().Create(&org).Error; err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	user := models.User{
+		ID:              "platform-admin-user",
+		Email:           "admin@example.com",
+		Password:        "hashed",
+		Name:            "Admin",
+		FullName:        "Platform Admin",
+		Role:            "user",
+		OrgID:           org.ID,
+		OrgRole:         "owner",
+		CurrentOrgID:    org.ID,
+		LastActiveOrgID: org.ID,
+		IsPlatformAdmin: true,
+		Status:          "active",
+	}
+	if err := repo.DB().Create(&user).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := repo.DB().Create(&models.OrganizationMember{ID: "member-admin", OrganizationID: org.ID, UserID: user.ID, Role: "owner", Status: "active"}).Error; err != nil {
+		t.Fatalf("seed membership: %v", err)
+	}
+	profile, err := service.Me(user.ID)
+	if err != nil {
+		t.Fatalf("Me: %v", err)
+	}
+	if !profile.IsPlatformAdmin || !testContains(profile.Permissions, "platform.admin") {
+		t.Fatalf("expected platform admin permission from user flag, got %+v", profile)
+	}
+}
+
+func TestIdentityServiceOwnerRoleDoesNotImplyPlatformAdmin(t *testing.T) {
+	service, repo := newIdentityTestService(t)
+	org := models.Organization{ID: "org-owner", Name: "Owner Org", PlanID: "starter", Status: "active"}
+	if err := repo.DB().Create(&org).Error; err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	user := models.User{ID: "owner-user", Email: "owner@example.com", Password: "hashed", Name: "Owner", FullName: "Org Owner", Role: "user", OrgID: org.ID, OrgRole: "owner", CurrentOrgID: org.ID, LastActiveOrgID: org.ID, Status: "active"}
+	if err := repo.DB().Create(&user).Error; err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := repo.DB().Create(&models.OrganizationMember{ID: "member-owner", OrganizationID: org.ID, UserID: user.ID, Role: "owner", Status: "active"}).Error; err != nil {
+		t.Fatalf("seed membership: %v", err)
+	}
+	profile, err := service.Me(user.ID)
+	if err != nil {
+		t.Fatalf("Me: %v", err)
+	}
+	if profile.IsPlatformAdmin || testContains(profile.Permissions, "platform.admin") {
+		t.Fatalf("owner role must not imply platform admin, got %+v", profile)
+	}
+}
+
+func testContains(items []string, needle string) bool {
+	for _, item := range items {
+		if item == needle {
+			return true
+		}
+	}
+	return false
 }

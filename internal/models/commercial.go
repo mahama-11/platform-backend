@@ -280,6 +280,17 @@ type QuotaLedger struct {
 	CreatedAt          time.Time `json:"created_at"`
 }
 
+type QuotaBalance struct {
+	ID                 string    `gorm:"primaryKey;type:varchar(64)" json:"id"`
+	BillingSubjectType string    `gorm:"uniqueIndex:idx_quota_balance_subject_item;not null" json:"billing_subject_type"`
+	BillingSubjectID   string    `gorm:"uniqueIndex:idx_quota_balance_subject_item;not null" json:"billing_subject_id"`
+	BillableItemCode   string    `gorm:"uniqueIndex:idx_quota_balance_subject_item;not null" json:"billable_item_code"`
+	AvailableUnits     int64     `json:"available_units"`
+	LedgerSyncedAt     time.Time `json:"ledger_synced_at"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+}
+
 type CreditsLedger struct {
 	ID                 string    `gorm:"primaryKey;type:varchar(64)" json:"id"`
 	BillingSubjectType string    `gorm:"index;not null" json:"billing_subject_type"`

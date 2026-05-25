@@ -6,6 +6,7 @@ import (
 	"platform-service/internal/config"
 	access "platform-service/internal/modules/access"
 	assetstorage "platform-service/internal/modules/assetstorage"
+	audit "platform-service/internal/modules/audit"
 	catalog "platform-service/internal/modules/catalog"
 	commercial "platform-service/internal/modules/commercial"
 	control "platform-service/internal/modules/control"
@@ -39,6 +40,7 @@ func TestNewRegistersCoreRoutes(t *testing.T) {
 		metering.NewHandler(nil, nil),
 		runtime.NewHandler(nil, nil),
 		templateops.NewHandler(nil),
+		audit.NewHandler(nil),
 		nil,
 	)
 	if engine == nil {
@@ -54,6 +56,8 @@ func TestNewRegistersCoreRoutes(t *testing.T) {
 		"POST /api/v1/auth/login",
 		"POST /api/v1/runtime/providers/:providerCode/callback",
 		"GET /api/v1/template-ops/catalog",
+		"GET /api/v1/audit/logs",
+		"GET /api/v1/audit/logs/:auditID",
 		"POST /internal/v1/runtime/jobs",
 		"POST /internal/v1/commercial/route/resolve",
 		"GET /internal/v1/wallet/summary",

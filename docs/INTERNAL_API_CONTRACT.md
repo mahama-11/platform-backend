@@ -182,6 +182,10 @@ GET /internal/v1/wallet/accounts?billing_subject_type=organization&billing_subje
   - Read-only product-scoped runtime capability matrix.
   - Required query: `product_code`; optional query: `task_type`.
   - Returns known P0 runtime task types (`image_understanding`, `ocr`, `image_generation`, `image_inpainting`, `video_keyframe`) with provider/callback/storage/billing readiness and stable reason codes such as `contract-needed`, `provider_binding_missing`, `storage_binding_missing`, and `billable_item_missing`.
+- `POST /internal/v1/runtime/jobs`
+  - Creates a product-scoped runtime job and enqueues dispatch atomically.
+  - Idempotency is scoped to `product_code + organization_id + source_type + source_id + task_type + idempotency_key`; the same client key may be reused by a different product/org/source/task boundary without colliding.
+  - A replay within the same scope returns the existing job. A semantic boundary conflict detected by older clients or stale storage returns HTTP `409` with `RUNTIME_JOB_IDEMPOTENCY_CONFLICT`.
 - `POST /internal/v1/incentives/rewards`
 - `GET /internal/v1/incentives/referral-programs`
 - `POST /internal/v1/incentives/referral-programs`
@@ -334,6 +338,19 @@ GET /internal/v1/wallet/accounts?billing_subject_type=organization&billing_subje
   - handler 级 span
   - 业务计数器
   - 可审计 mutation 记录
+
+### 10.1 Platform Audit / Diagnostics 查询接口
+
+以下接口是平台管理员排障用 public API，使用 JWTAuth + `platform.admin` 权限，并沿用统一 `JSONSuccess` 响应 envelope。
+
+- `GET /api/v1/audit/logs` (`auditHandler.ListLogs`)
+  - 查询 `platform_audit_logs`，不写入 access log DB。
+  - Query filters: `query`（匹配 `request_id`、`trace_id`、`actor_user_id`、`actor_org_id`、`action`、`target_type`、`target_id`、`route`、`details`）、`action`、`target_type`、`status`、`actor_user_id`、`actor_org_id`、`request_id`、`trace_id`、`limit`、`offset`。
+  - Pagination: `limit` 默认 50、最大 200；`offset` 最小 0；排序为 `created_at DESC`。
+  - Response data: `{items,total,limit,offset,stats}`；`stats` 包含 `total`、`success_count`、`failure_count`、`distinct_actions`、`latest_created_at`、`by_status`、`by_action`、`by_target_type`。
+- `GET /api/v1/audit/logs/:auditID` (`auditHandler.GetLog`)
+  - 按 audit ID 返回单条 `platform_audit_logs` 详情。
+  - 404 使用统一 error envelope，调用方应校验 audit ID 是否存在。
 
 ## 11. Swagger / OpenAPI 现状
 

@@ -188,9 +188,12 @@ func (r *RuntimeRepository) FindRuntimeJobByID(id string) (*models.RuntimeJob, e
 	return &item, nil
 }
 
-func (r *RuntimeRepository) FindRuntimeJobByIdempotencyKey(key string) (*models.RuntimeJob, error) {
+func (r *RuntimeRepository) FindRuntimeJobByIdempotencyKey(productCode, organizationID, sourceType, sourceID, taskType, key string) (*models.RuntimeJob, error) {
 	var item models.RuntimeJob
-	if err := r.db.Where("idempotency_key = ?", key).First(&item).Error; err != nil {
+	if err := r.db.Where(
+		"product_code = ? AND organization_id = ? AND source_type = ? AND source_id = ? AND task_type = ? AND idempotency_key = ?",
+		productCode, organizationID, sourceType, sourceID, taskType, key,
+	).First(&item).Error; err != nil {
 		return nil, err
 	}
 	return &item, nil

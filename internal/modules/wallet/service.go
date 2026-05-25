@@ -773,7 +773,7 @@ func (s *Service) DebitByPriorityTx(tx *gorm.DB, subjectType, subjectID, product
 	if amount <= 0 {
 		return 0, "", nil, nil
 	}
-	accounts, err := s.prioritizedCreditAccounts(subjectType, subjectID, productCode, primaryAssetCode)
+	accounts, err := s.prioritizedCreditAccountsTx(tx, subjectType, subjectID, productCode, primaryAssetCode)
 	if err != nil {
 		return 0, "", nil, err
 	}
@@ -1146,8 +1146,15 @@ func (s *Service) accountSpendableBalance(account models.WalletAccount, now time
 	return 0, nil
 }
 
-func (s *Service) prioritizedCreditAccounts(subjectType, subjectID, productCode, primaryAssetCode string) ([]models.WalletAccount, error) {
-	accounts, err := s.repo.ListWalletAccounts(subjectType, subjectID)
+func (s *Service) prioritizedCreditAccountsTx(tx *gorm.DB, subjectType, subjectID, productCode, primaryAssetCode string) ([]models.WalletAccount, error) {
+	if tx == nil {
+		tx = s.repo.DB()
+	}
+	var accounts []models.WalletAccount
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("billing_subject_type = ? AND billing_subject_id = ?", subjectType, subjectID).
+		Order("created_at asc").
+		Find(&accounts).Error
 	if err != nil {
 		return nil, err
 	}
@@ -1167,7 +1174,10 @@ func (s *Service) prioritizedCreditAccounts(subjectType, subjectID, productCode,
 	seen := map[string]struct{}{}
 	orderedCodes := make([]string, 0, len(accountByCode))
 	if productCode != "" {
-		defs, err := s.repo.ListAssetDefinitions(productCode, "", platformconst.StatusActive)
+		var defs []models.AssetDefinition
+		err := tx.Where("product_code = ? AND status = ?", productCode, platformconst.StatusActive).
+			Order("asset_code asc").
+			Find(&defs).Error
 		if err != nil {
 			return nil, err
 		}

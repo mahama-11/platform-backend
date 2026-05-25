@@ -77,6 +77,8 @@ type UpdateRuntimeJobInput struct {
 	NextRetryAt    string `json:"next_retry_at"`
 }
 
+var ErrRuntimeJobIdempotencyConflict = errors.New("runtime job idempotency key conflicts with a different request boundary")
+
 type RecordRuntimeAttemptInput struct {
 	Status           string `json:"status" binding:"required"`
 	ErrorClass       string `json:"error_class"`
@@ -197,7 +199,7 @@ func (s *Service) ListProviderDefinitions() ([]models.RuntimeProviderDefinition,
 
 func (s *Service) CreateRuntimeJob(input CreateRuntimeJobInput) (*models.RuntimeJob, error) {
 	if input.IdempotencyKey != "" {
-		if existing, err := s.repo.FindRuntimeJobByIdempotencyKey(input.IdempotencyKey); err == nil {
+		if existing, err := s.repo.FindRuntimeJobByIdempotencyKey(input.ProductCode, input.OrganizationID, input.SourceType, input.SourceID, input.TaskType, input.IdempotencyKey); err == nil {
 			return existing, nil
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, err
@@ -299,68 +301,32 @@ func (s *Service) UpdateRuntimeJob(id string, input UpdateRuntimeJobInput) (*mod
 		return nil, err
 	}
 	now := time.Now()
-	if input.Status != "" {
-		if err := validateRuntimeJobStatusTransition(item.Status, input.Status); err != nil {
-			return nil, err
-		}
-		item.Status = input.Status
-	}
-	if input.Stage != "" {
-		item.Stage = input.Stage
-	}
-	if input.StageMessage != "" {
-		item.StageMessage = input.StageMessage
-	}
-	if input.ProviderJobID != "" {
-		item.ProviderJobID = input.ProviderJobID
-	}
-	if input.ErrorClass != "" {
-		item.ErrorClass = input.ErrorClass
-	}
-	if input.ErrorCode != "" {
-		item.ErrorCode = input.ErrorCode
-	}
-	if input.ErrorMessage != "" {
-		item.ErrorMessage = input.ErrorMessage
-	}
-	if input.OutputManifest != "" {
-		item.OutputManifest = input.OutputManifest
-	}
-	if input.RouteSnapshot != "" {
-		item.RouteSnapshot = input.RouteSnapshot
-	}
-	if input.Metadata != "" {
-		item.Metadata = input.Metadata
-	}
-	if input.AttemptCount != nil {
-		item.AttemptCount = *input.AttemptCount
-	}
+	var nextRetryAt *time.Time
 	if input.NextRetryAt != "" {
-		if nextRetryAt, err := time.Parse(time.RFC3339, input.NextRetryAt); err == nil {
-			item.NextRetryAt = &nextRetryAt
+		if parsed, parseErr := time.Parse(time.RFC3339, input.NextRetryAt); parseErr == nil {
+			nextRetryAt = &parsed
 		}
 	}
-	switch item.Status {
-	case platformconst.StatusCompleted:
-		item.CompletedAt = &now
-		item.CanceledAt = nil
-		item.NextRetryAt = nil
-	case platformconst.StatusCanceled:
-		item.CanceledAt = &now
-		item.NextRetryAt = nil
-	case platformconst.StatusFailed:
-		item.NextRetryAt = nil
-	}
-	if input.Status == platformconst.StatusCompleted || input.Status == platformconst.StatusFailed || input.Status == platformconst.StatusCanceled {
-		if err := s.saveRuntimeJobWithTerminalChargeBinding(item, input.Status); err != nil {
-			return nil, err
-		}
-		return item, nil
-	}
-	if err := s.repo.SaveRuntimeJob(item); err != nil {
+	updated, _, err := s.transitionRuntimeJob(item, RuntimeJobTransitionInput{
+		Event:          RuntimeJobEventAdminPatch,
+		Now:            now,
+		Status:         RuntimeJobStatus(input.Status),
+		Stage:          input.Stage,
+		StageMessage:   input.StageMessage,
+		ProviderJobID:  input.ProviderJobID,
+		ErrorClass:     input.ErrorClass,
+		ErrorCode:      input.ErrorCode,
+		ErrorMessage:   input.ErrorMessage,
+		OutputManifest: input.OutputManifest,
+		RouteSnapshot:  input.RouteSnapshot,
+		Metadata:       input.Metadata,
+		AttemptCount:   input.AttemptCount,
+		NextRetryAt:    nextRetryAt,
+	})
+	if err != nil {
 		return nil, err
 	}
-	return item, nil
+	return updated, nil
 }
 
 func (s *Service) CancelRuntimeJob(id string) (*models.RuntimeJob, error) {
@@ -789,6 +755,19 @@ func (s *Service) HandleProviderCallbackPayload(providerCode, runtimeJobID strin
 		return err
 	}
 	if job.Status == platformconst.StatusCompleted || job.Status == platformconst.StatusFailed || job.Status == platformconst.StatusCanceled {
+		if payload != nil {
+			switch strings.ToLower(strings.TrimSpace(payload.Status)) {
+			case platformconst.StatusQueued, platformconst.StatusProcessing, "running", "in_progress":
+				_, _, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+					Event:         RuntimeJobEventProviderProgress,
+					Now:           time.Now(),
+					Stage:         defaultString(payload.Stage, "provider_running"),
+					StageMessage:  defaultString(payload.StageMessage, "Provider is still processing"),
+					ProviderJobID: payload.ProviderJobID,
+				})
+				return err
+			}
+		}
 		return nil
 	}
 	if providerCode != "" && job.ProviderCode != "" && providerCode != job.ProviderCode && !(providerCode == "comfyui" && job.ProviderCode == "comfyui_bridge") {
@@ -801,7 +780,15 @@ func (s *Service) HandleProviderCallbackPayload(providerCode, runtimeJobID strin
 		payload.ProviderCode = providerCode
 	}
 	if payload.ProviderJobID != "" && job.ProviderJobID == "" {
-		job.ProviderJobID = payload.ProviderJobID
+		if _, _, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+			Event:         RuntimeJobEventProviderAccepted,
+			Now:           time.Now(),
+			ProviderJobID: payload.ProviderJobID,
+			Stage:         defaultString(payload.Stage, "provider_accepted"),
+			StageMessage:  defaultString(payload.StageMessage, "Accepted by provider callback"),
+		}); err != nil {
+			return err
+		}
 	}
 	now := time.Now()
 	switch strings.ToLower(strings.TrimSpace(payload.Status)) {
@@ -844,11 +831,18 @@ func (s *Service) HandleProviderCallbackPayload(providerCode, runtimeJobID strin
 		return s.cancelRuntimeJobFromProviderCallback(job, defaultString(payload.StageMessage, "Provider canceled runtime job"), now)
 	case platformconst.StatusQueued, platformconst.StatusProcessing, "running", "in_progress":
 		progress := payload.Progress
-		job.Status = platformconst.StatusProcessing
-		job.Stage = defaultString(payload.Stage, "provider_running")
-		job.StageMessage = defaultString(payload.StageMessage, "Provider is still processing")
-		if err := s.repo.SaveRuntimeJob(job); err != nil {
+		_, result, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+			Event:         RuntimeJobEventProviderProgress,
+			Now:           now,
+			Stage:         defaultString(payload.Stage, "provider_running"),
+			StageMessage:  defaultString(payload.StageMessage, "Provider is still processing"),
+			ProviderJobID: payload.ProviderJobID,
+		})
+		if err != nil {
 			return err
+		}
+		if result.Noop {
+			return nil
 		}
 		return s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{Status: platformconst.StatusProcessing, Stage: job.Stage, StageMessage: job.StageMessage, Progress: &progress, ProviderJobID: job.ProviderJobID})
 	default:
@@ -857,11 +851,12 @@ func (s *Service) HandleProviderCallbackPayload(providerCode, runtimeJobID strin
 }
 
 func (s *Service) cancelRuntimeJobFromProviderCallback(job *models.RuntimeJob, message string, now time.Time) error {
-	job.Status = platformconst.StatusCanceled
-	job.Stage = platformconst.StatusCanceled
-	job.StageMessage = message
-	job.CompletedAt = &now
-	if err := s.saveRuntimeJobWithTerminalChargeBinding(job, platformconst.StatusCanceled); err != nil {
+	if _, _, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+		Event:        RuntimeJobEventCanceled,
+		Now:          now,
+		Stage:        platformconst.StatusCanceled,
+		StageMessage: message,
+	}); err != nil {
 		return err
 	}
 	return s.notifyProductRuntimeUpdate(job, ProductUpdateRuntimeInput{Status: platformconst.StatusCanceled, Stage: platformconst.StatusCanceled, StageMessage: message, ProviderJobID: job.ProviderJobID})
@@ -895,11 +890,10 @@ func defaultInt(value, fallback int) int {
 
 // --- 状态机转移校验 ---
 
-// RuntimeJob 合法状态转移白名单
+// RuntimeJob 合法状态转移白名单。终态不可重新打开；失败后的重试应创建新的尝试/作业生命周期，而不是把终态作业改回 queued。
 var validRuntimeJobTransitions = map[string][]string{
 	platformconst.StatusQueued:     {platformconst.StatusProcessing, platformconst.StatusCanceled, platformconst.StatusFailed},
 	platformconst.StatusProcessing: {platformconst.StatusCompleted, platformconst.StatusFailed, platformconst.StatusCanceled},
-	platformconst.StatusFailed:     {platformconst.StatusQueued}, // 允许重试
 }
 
 func validateRuntimeJobStatusTransition(from, to string) error {

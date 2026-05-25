@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"platform-service/internal/config"
@@ -24,6 +25,9 @@ func TestMinimaxImageSubmitImageToImageSendsSubjectReference(t *testing.T) {
 		}
 		if body.Model != "image-01" || body.ResponseFormat != "base64" || body.AspectRatio != "16:9" {
 			t.Fatalf("unexpected request body: %+v", body)
+		}
+		if !strings.Contains(body.Prompt, "no clutter") || !strings.Contains(body.Prompt, "Must avoid") {
+			t.Fatalf("negative prompt should be applied as labeled minimax prompt text: %q", body.Prompt)
 		}
 		if len(body.SubjectReference) != 1 {
 			t.Fatalf("expected subject reference: %+v", body.SubjectReference)
@@ -52,8 +56,10 @@ func TestMinimaxImageSubmitImageToImageSendsSubjectReference(t *testing.T) {
 		Input: RuntimeInputManifest{
 			InputMode: "image_to_image",
 			ParamsSnapshot: map[string]any{
-				"prompt":       "Generate ecommerce product photo",
-				"aspect_ratio": "16:9",
+				"prompt":          "Generate product photo",
+				"width":           1280,
+				"height":          720,
+				"negative_prompt": "no clutter",
 			},
 			SourceAssets: []ProviderSourceAsset{{SourceURL: "https://example.com/source.jpg", MimeType: "image/jpeg"}},
 		},
@@ -67,6 +73,39 @@ func TestMinimaxImageSubmitImageToImageSendsSubjectReference(t *testing.T) {
 	variant := submission.Completion.Variants[0]
 	if variant.MimeType != "image/jpeg" || variant.InlineData != "data:image/jpeg;base64,aGVsbG8td29ybGQ=" {
 		t.Fatalf("unexpected variant: %+v", variant)
+	}
+	if variant.Metadata["requested_aspect_ratio"] != "16:9" || variant.Metadata["requested_width"] != 1280 || variant.Metadata["requested_height"] != 720 || variant.Metadata["negative_prompt_applied"] != true {
+		t.Fatalf("expected requested dimensions and negative prompt metadata, got %#v", variant.Metadata)
+	}
+}
+
+func TestMinimaxAspectRatioFromDimensionsMapsNearestSupportedRatio(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		params map[string]any
+		want   string
+	}{
+		{name: "exact wide", params: map[string]any{"width": 1280, "height": 720}, want: "16:9"},
+		{name: "near portrait", params: map[string]any{"width": 768, "height": 1344}, want: "9:16"},
+		{name: "near poster", params: map[string]any{"width": 900, "height": 1200}, want: "3:4"},
+		{name: "numeric strings", params: map[string]any{"width": "1024", "height": "1024"}, want: "1:1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := minimaxAspectRatioFromDimensions(tc.params); got != tc.want {
+				t.Fatalf("minimaxAspectRatioFromDimensions()=%q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMinimaxAspectRatioPrecedenceKeepsExplicitRatio(t *testing.T) {
+	got := normalizeMinimaxAspectRatio(firstNonEmpty(
+		stringMapValue(map[string]any{"aspect_ratio": "3:4", "width": 1280, "height": 720}, "aspect_ratio"),
+		minimaxAspectRatioFromDimensions(map[string]any{"width": 1280, "height": 720}),
+		"1:1",
+	))
+	if got != "3:4" {
+		t.Fatalf("explicit aspect_ratio should win over dimensions, got %q", got)
 	}
 }
 

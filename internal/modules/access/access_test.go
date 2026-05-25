@@ -71,7 +71,7 @@ func TestSeedDefaultsRolePermissionSemanticsAndCleanup(t *testing.T) {
 	if err := SeedDefaults(repo.DB()); err != nil {
 		t.Fatalf("SeedDefaults second run: %v", err)
 	}
-	assertRoleHasPermissions(t, repo.DB(), "owner", []string{"billing.read", "billing.write", "oauth.read", "oauth.write", "logs.read", "platform.admin"}, nil)
+	assertRoleHasPermissions(t, repo.DB(), "owner", []string{"billing.read", "billing.write", "oauth.read", "oauth.write", "logs.read"}, []string{"platform.admin"})
 	assertRoleHasPermissions(t, repo.DB(), "admin", []string{"billing.read", "billing.write", "oauth.read", "oauth.write", "logs.read"}, []string{"platform.admin"})
 	assertRoleHasPermissions(t, repo.DB(), "developer", []string{"org.read", "org.switch", "team.read", "org.usage.read"}, []string{"billing.read", "billing.write", "oauth.read", "oauth.write", "platform.admin"})
 	assertRoleHasPermissions(t, repo.DB(), "viewer", []string{"org.read", "org.switch", "team.read"}, []string{"billing.read", "billing.write", "logs.read", "oauth.read", "oauth.write", "platform.admin"})

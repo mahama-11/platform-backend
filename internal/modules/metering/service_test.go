@@ -4,13 +4,14 @@ import (
 	"errors"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"platform-service/internal/models"
 	walletmodule "platform-service/internal/modules/wallet"
 	"platform-service/internal/repository"
-
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -501,7 +502,7 @@ func newTestService(t *testing.T) (*Service, *gorm.DB) {
 	t.Helper()
 
 	dbPath := filepath.Join(t.TempDir(), "metering-test.db")
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(dbPath+"?_busy_timeout=5000"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
@@ -513,6 +514,7 @@ func newTestService(t *testing.T) (*Service, *gorm.DB) {
 		&models.UsageRecord{},
 		&models.UsageAgg{},
 		&models.QuotaLedger{},
+		&models.QuotaBalance{},
 		&models.BillingLedger{},
 		&models.ResourceReservation{},
 		&models.SettlementRecord{},
@@ -579,6 +581,92 @@ func createTestReferralCode(t *testing.T, db *gorm.DB, programCode, code, promot
 	if err := db.Create(item).Error; err != nil {
 		t.Fatalf("create referral code: %v", err)
 	}
+}
+
+func TestIngestEvent_ConcurrentIncludedThenOverageDoesNotOverconsumeQuotaSharedSQLite(t *testing.T) {
+	// Normal go test regression using SQLite shared-cache transactions because no
+	// external-service-free Postgres harness exists in this repo. The test focuses on
+	// the quota aggregate-row invariant: concurrent consumers may not write more
+	// consume ledger units than the granted quota.
+	service, db := newTestService(t)
+	productID := createTestProduct(t, db, "quota-concurrency")
+	billableItem := createTestBillableItem(t, db, productID, "quota.concurrent", "included_then_overage")
+	createTestRateCard(t, db, productID, billableItem.ID, "CNY", 10)
+	createTestQuotaGrant(t, db, "organization", "org-quota-concurrent", "quota.concurrent", 3)
+
+	const workers = 6
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			var err error
+			for attempt := 0; attempt < 25; attempt++ {
+				_, err = service.IngestEvent(IngestEventInput{
+					EventID:            "evt-quota-concurrent-" + strconv.Itoa(i),
+					ProductCode:        "quota-concurrency",
+					OrgID:              "org-quota-concurrent",
+					BillableItemCode:   "quota.concurrent",
+					BillingSubjectType: "organization",
+					BillingSubjectID:   "org-quota-concurrent",
+					UsageUnits:         1,
+				})
+				if err == nil || !meteringSQLiteBusy(err) {
+					break
+				}
+				time.Sleep(time.Duration(attempt+1) * time.Millisecond)
+			}
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("unexpected concurrent ingest error: %v", err)
+		}
+	}
+
+	var quotaConsumed int64
+	if err := db.Model(&models.QuotaLedger{}).
+		Select("COALESCE(SUM(units), 0)").
+		Where("billing_subject_type = ? AND billing_subject_id = ? AND billable_item_code = ? AND direction = ?", "organization", "org-quota-concurrent", "quota.concurrent", "consume").
+		Scan(&quotaConsumed).Error; err != nil {
+		t.Fatalf("sum quota consumed: %v", err)
+	}
+	if quotaConsumed != 3 {
+		t.Fatalf("quota consumed = %d, want exactly granted quota 3", quotaConsumed)
+	}
+	var balance models.QuotaBalance
+	if err := db.Where("billing_subject_type = ? AND billing_subject_id = ? AND billable_item_code = ?", "organization", "org-quota-concurrent", "quota.concurrent").First(&balance).Error; err != nil {
+		t.Fatalf("load quota balance: %v", err)
+	}
+	if balance.AvailableUnits != 0 {
+		t.Fatalf("quota balance available = %d, want 0", balance.AvailableUnits)
+	}
+	var billed int64
+	if err := db.Model(&models.BillingLedger{}).
+		Select("COALESCE(SUM(amount), 0)").
+		Where("billing_subject_type = ? AND billing_subject_id = ? AND billable_item_code = ?", "organization", "org-quota-concurrent", "quota.concurrent").
+		Scan(&billed).Error; err != nil {
+		t.Fatalf("sum billing: %v", err)
+	}
+	if billed != 30 {
+		t.Fatalf("billed amount = %d, want 30 for overage after quota", billed)
+	}
+}
+
+func meteringSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "database is locked") || strings.Contains(msg, "database table is locked")
 }
 
 func createTestProduct(t *testing.T, db *gorm.DB, code string) string {

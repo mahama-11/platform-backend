@@ -6,13 +6,14 @@ source "$SCRIPT_DIR/lib/common.sh"
 
 PHASE="${1:-all}"
 if [ "$#" -gt 0 ]; then shift; fi
-DRY_RUN=0
+DRY_RUN="${DRY_RUN:-0}"
 SKIP_SMOKE="${SKIP_SMOKE:-0}"
 UPLOAD_PROD_CONFIG="${UPLOAD_PROD_CONFIG:-0}"
 PROD_TAG_IN="${PROD_TAG:-}"
 TAG_EXPLICIT=0
 BUILD_METHOD_FILE=""
 IMAGE_TAR_FILE="${IMAGE_TAR_FILE:-${IMAGE_TAR:-}}"
+DEFAULT_GOPROXY="${DEPLOY_GOPROXY:-https://goproxy.cn,direct}"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -51,7 +52,7 @@ if [ -z "$PROD_TAG_IN" ]; then
 fi
 IMG="$PLATFORM_IMAGE:$PROD_TAG_IN"
 OUT_DEFAULT="$LOCAL_PROD_DIR/${PLATFORM_IMAGE##*/}_prod_$TS.tar.gz"
-if [ "$DRY_RUN" != "1" ] || [ "$PHASE" = "build" ] || [ "$PHASE" = "all" ]; then
+if [ "$DRY_RUN" != "1" ]; then
   printf '%s\n' "$PROD_TAG_IN" > "$TAG_STATE"
 fi
 
@@ -64,7 +65,7 @@ placeholder_scan() {
 
 build_phase() {
   if [ "$DRY_RUN" = "1" ]; then
-    log "DRY_RUN deploy.build image=$IMG out=$OUT_DEFAULT"
+    log "DRY_RUN deploy.build image=$IMG out=$OUT_DEFAULT goproxy=${GOPROXY:-$DEFAULT_GOPROXY} fallback=local-binary"
     return 0
   fi
   require_cmd docker
@@ -72,12 +73,12 @@ build_phase() {
   local out="$OUT_DEFAULT"
   local method="docker"
   log "BUILD start image=$IMG"
-  if docker buildx build --platform linux/amd64 -t "$IMG" "$REPO_ROOT"; then
+  if docker buildx build --platform linux/amd64 --build-arg "GOPROXY=${GOPROXY:-$DEFAULT_GOPROXY}" -t "$IMG" "$REPO_ROOT"; then
     method="docker"
   else
     warn "docker_build_failed fallback=local-binary"
     method="local-binary"
-    (cd "$REPO_ROOT" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o platform-service-linux ./cmd/server)
+    (cd "$REPO_ROOT" && GOPROXY="${GOPROXY:-$DEFAULT_GOPROXY}" CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o platform-service-linux ./cmd/server)
     docker build -f "$REPO_ROOT/Dockerfile.local-binary" -t "$IMG" "$REPO_ROOT"
     rm -f "$REPO_ROOT/platform-service-linux"
   fi
@@ -89,7 +90,13 @@ build_phase() {
 
 upload_phase() {
   local out="${IMAGE_TAR_FILE:-}"
-  [ -n "$out" ] || out="$(cat "$OUT_STATE" 2>/dev/null || true)"
+  if [ -z "$out" ]; then
+    if [ "$DRY_RUN" = "1" ] && { [ "$PHASE" = "build" ] || [ "$PHASE" = "all" ]; }; then
+      out="$OUT_DEFAULT"
+    else
+      out="$(cat "$OUT_STATE" 2>/dev/null || true)"
+    fi
+  fi
   if [ "$DRY_RUN" = "1" ]; then
     [ -n "$out" ] || out="$OUT_DEFAULT"
     local base
@@ -116,7 +123,12 @@ upload_phase() {
 }
 
 restart_phase() {
-  local out="$(cat "$OUT_STATE" 2>/dev/null || true)"
+  local out=""
+  if [ "$DRY_RUN" = "1" ] && { [ "$PHASE" = "build" ] || [ "$PHASE" = "all" ]; }; then
+    out="$OUT_DEFAULT"
+  else
+    out="$(cat "$OUT_STATE" 2>/dev/null || true)"
+  fi
   if [ "$DRY_RUN" = "1" ]; then
     [ -n "$out" ] || out="$OUT_DEFAULT"
     local base="$(basename "$out")"

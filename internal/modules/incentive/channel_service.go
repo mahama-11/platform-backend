@@ -480,7 +480,7 @@ func (s *Service) RecordChannelCharge(input RecordChannelChargeInput) (*RecordCh
 			UpdatedAt:              now,
 		}
 		if status == platformconst.CommissionStatusEarned {
-			earnedAt := now
+			earnedAt := recognitionAt
 			ledger.EarnedAt = &earnedAt
 		}
 		resultSnapshot, _ := json.Marshal(map[string]any{
@@ -588,7 +588,7 @@ func (s *Service) RecordChannelCharge(input RecordChannelChargeInput) (*RecordCh
 		UpdatedAt:             now,
 	}
 	if status == platformconst.CommissionStatusEarned {
-		earnedAt := now
+		earnedAt := occurredAt
 		ledger.EarnedAt = &earnedAt
 	}
 	if err := s.repo.CreateChannelCommissionLedger(ledger); err != nil {

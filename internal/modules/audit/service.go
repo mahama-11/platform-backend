@@ -2,6 +2,7 @@ package audit
 
 import (
 	"encoding/json"
+	"errors"
 	"reflect"
 	"sort"
 	"time"
@@ -18,6 +19,11 @@ type Service struct {
 	repo *repository.AuditRepository
 }
 
+const (
+	defaultQueryLimit = 50
+	maxQueryLimit     = 200
+)
+
 type RecordInput struct {
 	Action             string
 	TargetType         string
@@ -29,6 +35,29 @@ type RecordInput struct {
 	BeforeSnapshot     any
 	AfterSnapshot      any
 }
+
+type QueryInput struct {
+	Query       string `form:"query"`
+	Action      string `form:"action"`
+	TargetType  string `form:"target_type"`
+	Status      string `form:"status"`
+	ActorUserID string `form:"actor_user_id"`
+	ActorOrgID  string `form:"actor_org_id"`
+	RequestID   string `form:"request_id"`
+	TraceID     string `form:"trace_id"`
+	Limit       int    `form:"limit"`
+	Offset      int    `form:"offset"`
+}
+
+type QueryResult struct {
+	Items  []models.AuditLog        `json:"items"`
+	Total  int64                    `json:"total"`
+	Limit  int                      `json:"limit"`
+	Offset int                      `json:"offset"`
+	Stats  repository.AuditLogStats `json:"stats"`
+}
+
+var ErrInvalidPagination = errors.New("invalid audit log pagination")
 
 func NewService(repo *repository.AuditRepository) *Service {
 	return &Service{repo: repo}
@@ -58,6 +87,43 @@ func (s *Service) RecordFromGin(c *gin.Context, input RecordInput) error {
 		CreatedAt:          time.Now(),
 	}
 	return s.repo.Create(item)
+}
+
+func (s *Service) QueryLogs(input QueryInput) (QueryResult, error) {
+	input = normalizeQueryInput(input)
+	if input.Offset < 0 {
+		return QueryResult{}, ErrInvalidPagination
+	}
+	items, total, stats, err := s.repo.List(repository.AuditLogQuery{
+		Query:       input.Query,
+		Action:      input.Action,
+		TargetType:  input.TargetType,
+		Status:      input.Status,
+		ActorUserID: input.ActorUserID,
+		ActorOrgID:  input.ActorOrgID,
+		RequestID:   input.RequestID,
+		TraceID:     input.TraceID,
+		Limit:       input.Limit,
+		Offset:      input.Offset,
+	})
+	if err != nil {
+		return QueryResult{}, err
+	}
+	return QueryResult{Items: items, Total: total, Limit: input.Limit, Offset: input.Offset, Stats: stats}, nil
+}
+
+func (s *Service) GetLog(id string) (*models.AuditLog, error) {
+	return s.repo.FindByID(id)
+}
+
+func normalizeQueryInput(input QueryInput) QueryInput {
+	if input.Limit <= 0 {
+		input.Limit = defaultQueryLimit
+	}
+	if input.Limit > maxQueryLimit {
+		input.Limit = maxQueryLimit
+	}
+	return input
 }
 
 func encodeSnapshot(value any) (string, error) {
