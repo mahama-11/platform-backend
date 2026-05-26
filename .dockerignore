@@ -1,0 +1,19 @@
+.git
+.gitignore
+Dockerfile*
+README.md
+artifacts/
+backups/
+dist/
+tmp/
+reports/
+coverage/
+node_modules/
+*.tar.gz
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+# Local build outputs are copied explicitly by Dockerfile.dev when needed.
+# Dockerfile.dev still needs platform-service-linux and config.*.yaml, so they are intentionally not ignored.

@@ -100,6 +100,53 @@ func TestComfyUIBridgeSubmitImageToImageUsesImageEndpoint(t *testing.T) {
 	}
 }
 
+func TestComfyUIBridgeSubmitMultiImageUsesMultiImageEndpoint(t *testing.T) {
+	validPNG := "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/generate/multi-image" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"task_id": "task-multi",
+			"status":  "pending",
+		})
+	}))
+	defer server.Close()
+
+	provider := newComfyUIBridgeProvider("comfyui_bridge", config.ComfyUIBridgeConfig{
+		BaseURL:             server.URL,
+		DefaultOutputFormat: "png",
+	})
+	_, err := provider.Submit(context.Background(), ProviderJobRequest{
+		RuntimeJobID: "job-multi",
+		TaskType:     RuntimeTaskImageGeneration,
+		Input: RuntimeInputManifest{
+			InputMode:      "multi_image",
+			ParamsSnapshot: map[string]any{"prompt": "make ecommerce hero"},
+			SourceAssets: []ProviderSourceAsset{
+				{ID: "asset-1", MimeType: "image/png", SourceURL: "data:image/png;base64," + validPNG},
+				{ID: "asset-2", MimeType: "image/png", SourceURL: "data:image/png;base64," + validPNG},
+				{ID: "pad-3", MimeType: "image/png", SourceURL: "data:image/png;base64," + validPNG},
+				{ID: "pad-4", MimeType: "image/png", SourceURL: "data:image/png;base64," + validPNG},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("submit multi_image: %v", err)
+	}
+	images, _ := captured["images"].([]any)
+	if len(images) != 4 {
+		t.Fatalf("expected 4 images to be forwarded to multi-image endpoint, got %#v", captured["images"])
+	}
+	if images[0] != validPNG || images[3] != validPNG {
+		t.Fatalf("expected raw base64 image payloads, got %#v", images)
+	}
+}
+
 func TestComfyUIBridgePollCompletedBuildsInlineData(t *testing.T) {
 	sampleBase64 := base64.StdEncoding.EncodeToString([]byte("this-is-a-long-enough-result-image-payload-for-validation"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
