@@ -126,8 +126,8 @@ func TestSeedMenuOfferings(t *testing.T) {
 	if err := db.Model(&models.CommercialPackage{}).Where("product_id = ?", product.ID).Count(&packageCount).Error; err != nil {
 		t.Fatalf("count packages: %v", err)
 	}
-	if packageCount != 12 {
-		t.Fatalf("package count = %d, want 12", packageCount)
+	if packageCount != 13 {
+		t.Fatalf("package count = %d, want 13", packageCount)
 	}
 	var item models.BillableItem
 	if err := db.Where("code = ?", "menu.render.call").First(&item).Error; err != nil {
@@ -147,8 +147,15 @@ func TestSeedMenuOfferings(t *testing.T) {
 	if err := db.Model(&models.QuotaGrantPolicy{}).Where("product_code = ?", "menu").Count(&quotaPolicyCount).Error; err != nil {
 		t.Fatalf("count quota policies: %v", err)
 	}
-	if quotaPolicyCount != 12 {
-		t.Fatalf("quota policy count = %d, want 12", quotaPolicyCount)
+	if quotaPolicyCount != 13 {
+		t.Fatalf("quota policy count = %d, want 13", quotaPolicyCount)
+	}
+	var trialPolicy models.QuotaGrantPolicy
+	if err := db.Where("product_code = ? AND package_code = ? AND billable_item_code = ?", "menu", "menu.pkg.trial.signup", "menu.render.call").First(&trialPolicy).Error; err != nil {
+		t.Fatalf("load menu signup trial quota policy: %v", err)
+	}
+	if trialPolicy.GrantMode != "one_time" || trialPolicy.Units <= 0 || trialPolicy.Status != "active" {
+		t.Fatalf("unexpected signup trial policy: %+v", trialPolicy)
 	}
 	var capabilityPolicyCount int64
 	if err := db.Model(&models.PackageCapabilityPolicy{}).Where("product_code = ?", "menu").Count(&capabilityPolicyCount).Error; err != nil {

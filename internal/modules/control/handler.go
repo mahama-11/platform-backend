@@ -255,6 +255,36 @@ func (h *Handler) ResolveCapability(c *gin.Context) {
 	response.JSONSuccess(c, result)
 }
 
+func (h *Handler) ActivatePackage(c *gin.Context) {
+	span := startSpan(c, "control.package.activate")
+	defer span.End()
+	var req ActivatePackageInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		span.RecordError(err)
+		response.JSONBindError(c, err, "invalid package activation request")
+		return
+	}
+	result, err := h.service.ActivatePackage(req)
+	if err != nil {
+		span.RecordError(err)
+		response.WriteObservedSemanticError(c, err, response.CodeInternalError, "failed to activate package", "CONTROL_PACKAGE_ACTIVATION_FAILED", "Check product_code, package_code, reference_id, and active quota/capability policies before retrying.")
+		return
+	}
+	metrics.IncBusinessCounter("package_activation_total")
+	if h.audit != nil {
+		_ = h.audit.RecordFromGin(c, audit.RecordInput{
+			Action:             "control.package.activate",
+			TargetType:         "commercial_package",
+			TargetID:           result.PackageCode,
+			BillingSubjectType: result.BillingSubjectType,
+			BillingSubjectID:   result.BillingSubjectID,
+			Details:            result.ReferenceID,
+			AfterSnapshot:      result,
+		})
+	}
+	response.JSONSuccessWithStatus(c, 201, result)
+}
+
 func (h *Handler) Reserve(c *gin.Context) {
 	span := startSpan(c, "control.reserve")
 	defer span.End()

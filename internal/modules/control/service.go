@@ -1,7 +1,9 @@
 package control
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -92,6 +94,29 @@ type GrantCapabilityInput struct {
 	SourceType         string `json:"source_type"`
 	SourceID           string `json:"source_id"`
 	Metadata           string `json:"metadata"`
+}
+
+type ActivatePackageInput struct {
+	ProductCode        string          `json:"product_code" binding:"required"`
+	PackageCode        string          `json:"package_code" binding:"required"`
+	BillingSubjectType string          `json:"billing_subject_type" binding:"required"`
+	BillingSubjectID   string          `json:"billing_subject_id" binding:"required"`
+	ActivationReason   string          `json:"activation_reason"`
+	ReferenceID        string          `json:"reference_id" binding:"required"`
+	Metadata           json.RawMessage `json:"metadata"`
+}
+
+type PackageActivationResult struct {
+	ProductCode        string                   `json:"product_code"`
+	PackageCode        string                   `json:"package_code"`
+	BillingSubjectType string                   `json:"billing_subject_type"`
+	BillingSubjectID   string                   `json:"billing_subject_id"`
+	ActivationReason   string                   `json:"activation_reason"`
+	ReferenceID        string                   `json:"reference_id"`
+	QuotaGrants        []models.QuotaLedger     `json:"quota_grants"`
+	CapabilityGrants   []models.CapabilityGrant `json:"capability_grants"`
+	GrantedQuotaUnits  int64                    `json:"granted_quota_units"`
+	Idempotent         bool                     `json:"idempotent"`
 }
 
 type CreateQuotaGrantPolicyInput struct {
@@ -326,6 +351,133 @@ func (s *Service) ResolveCapability(productCode, subjectType, subjectID, capabil
 	result.Grant = &grants[0]
 	result.GrantValue = grants[0].GrantValue
 	return result, nil
+}
+
+func (s *Service) ActivatePackage(input ActivatePackageInput) (*PackageActivationResult, error) {
+	productCode := strings.TrimSpace(input.ProductCode)
+	packageCode := strings.TrimSpace(input.PackageCode)
+	subjectType := strings.TrimSpace(input.BillingSubjectType)
+	subjectID := strings.TrimSpace(input.BillingSubjectID)
+	referenceID := strings.TrimSpace(input.ReferenceID)
+	reason := defaultString(strings.TrimSpace(input.ActivationReason), "package_activation")
+	metadata := activationMetadataString(input.Metadata)
+	if productCode == "" || packageCode == "" || subjectType == "" || subjectID == "" || referenceID == "" {
+		return nil, errors.New("product_code, package_code, billing subject, and reference_id are required")
+	}
+
+	var result *PackageActivationResult
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		txService := &Service{repo: s.repo.WithTx(tx), wallet: s.wallet}
+		if err := txService.repo.LockPackageActivationReference(productCode, subjectType, subjectID, referenceID); err != nil {
+			return err
+		}
+		if _, err := txService.repo.FindActiveCommercialPackage(productCode, packageCode); err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("active package not found: %s/%s", productCode, packageCode)
+			}
+			return err
+		}
+		quotaPolicies, err := txService.repo.ListQuotaGrantPolicies(productCode, packageCode)
+		if err != nil {
+			return err
+		}
+		capabilityPolicies, err := txService.repo.ListPackageCapabilityPolicies(productCode, packageCode)
+		if err != nil {
+			return err
+		}
+		activeQuotaPolicies := make([]models.QuotaGrantPolicy, 0, len(quotaPolicies))
+		for _, policy := range quotaPolicies {
+			if policy.Status == platformconst.StatusActive && policy.Units > 0 && strings.TrimSpace(policy.BillableItemCode) != "" {
+				activeQuotaPolicies = append(activeQuotaPolicies, policy)
+			}
+		}
+		activeCapabilityPolicies := make([]models.PackageCapabilityPolicy, 0, len(capabilityPolicies))
+		for _, policy := range capabilityPolicies {
+			if policy.Status == platformconst.StatusActive && strings.TrimSpace(policy.CapabilityCode) != "" && strings.TrimSpace(policy.GrantValue) != "" {
+				activeCapabilityPolicies = append(activeCapabilityPolicies, policy)
+			}
+		}
+		if len(activeQuotaPolicies) == 0 && len(activeCapabilityPolicies) == 0 {
+			return fmt.Errorf("no active package policies found: %s/%s", productCode, packageCode)
+		}
+		replay := true
+		for _, policy := range activeQuotaPolicies {
+			if _, err := txService.repo.FindQuotaLedgerByReference(subjectType, subjectID, policy.BillableItemCode, platformconst.LedgerDirectionGrant, referenceID); err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				replay = false
+			}
+		}
+		for _, policy := range activeCapabilityPolicies {
+			if _, err := txService.repo.FindCapabilityGrantBySource(productCode, subjectType, subjectID, policy.CapabilityCode, "commercial_package_activation", referenceID); err != nil {
+				if !errors.Is(err, gorm.ErrRecordNotFound) {
+					return err
+				}
+				replay = false
+			}
+		}
+		activation := &PackageActivationResult{
+			ProductCode:        productCode,
+			PackageCode:        packageCode,
+			BillingSubjectType: subjectType,
+			BillingSubjectID:   subjectID,
+			ActivationReason:   reason,
+			ReferenceID:        referenceID,
+			QuotaGrants:        []models.QuotaLedger{},
+			CapabilityGrants:   []models.CapabilityGrant{},
+			Idempotent:         replay,
+		}
+		for _, policy := range activeQuotaPolicies {
+			ledger, err := txService.GrantQuota(GrantQuotaInput{
+				BillingSubjectType: subjectType,
+				BillingSubjectID:   subjectID,
+				BillableItemCode:   policy.BillableItemCode,
+				Units:              policy.Units,
+				Reason:             reason,
+				ReferenceID:        referenceID,
+			})
+			if err != nil {
+				return err
+			}
+			activation.QuotaGrants = append(activation.QuotaGrants, *ledger)
+			activation.GrantedQuotaUnits += policy.Units
+		}
+		for _, policy := range activeCapabilityPolicies {
+			grant, err := txService.GrantCapability(GrantCapabilityInput{
+				ProductCode:        productCode,
+				BillingSubjectType: subjectType,
+				BillingSubjectID:   subjectID,
+				CapabilityCode:     policy.CapabilityCode,
+				GrantValue:         policy.GrantValue,
+				SourceType:         "commercial_package_activation",
+				SourceID:           referenceID,
+				Metadata:           defaultString(metadata, policy.Metadata),
+			})
+			if err != nil {
+				return err
+			}
+			activation.CapabilityGrants = append(activation.CapabilityGrants, *grant)
+		}
+		result = activation
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func activationMetadataString(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	var decoded string
+	if err := json.Unmarshal(raw, &decoded); err == nil {
+		return strings.TrimSpace(decoded)
+	}
+	return trimmed
 }
 
 func (s *Service) GrantQuota(input GrantQuotaInput) (*models.QuotaLedger, error) {
@@ -632,20 +784,4 @@ func (s *Service) ReleaseReservation(id string) (*models.ResourceReservation, er
 	}
 	log.Info("control.release.success", "status", item.Status)
 	return item, nil
-}
-
-func optionalString(value string) *string {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return &value
-}
-
-const defaultCreditsAssetCode = "PLATFORM_CREDIT"
-
-func defaultString(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
 }

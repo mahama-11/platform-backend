@@ -145,6 +145,13 @@ func Steps() []Step {
 				return scopeRuntimeJobIdempotencyKey(db)
 			},
 		},
+		{
+			Version: 202606010001,
+			Name:    "seed_menu_signup_trial_package",
+			Up: func(db *gorm.DB) error {
+				return seedMenuOfferings(db)
+			},
+		},
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Version < steps[j].Version })
 	return steps

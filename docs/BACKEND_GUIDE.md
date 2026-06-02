@@ -6,6 +6,8 @@ This guide defines the current scope and engineering baseline of `v-platform-bac
 
 ## 1.1 Architecture Docs
 
+- [OBSERVABILITY_EVENT_SPEC.md](architecture/OBSERVABILITY_EVENT_SPEC.md): 共享事件/span/字段契约、敏感字段排除、request/trace ID 继承规则
+- [PLATFORM_STABILITY_CLOSED_LOOP_GATES.md](architecture/PLATFORM_STABILITY_CLOSED_LOOP_GATES.md): 平台稳定性闭环质量门禁，覆盖核心契约、runtime/provider/callback/result、quota/metering/grant-policy、storage/audit/observability 与 Ecom/Menu/KYC consumer sweep
 - [INTERNAL_API_CONTRACT.md](INTERNAL_API_CONTRACT.md): 平台内部服务接入契约、统一响应、错误处理与重试建议
 - [openapi/README.md](openapi/README.md): internal API 的 Swagger/OpenAPI 生成入口与当前覆盖范围
 - [PROD_DEPLOY_RUNBOOK.md](PROD_DEPLOY_RUNBOOK.md): Platform prod deploy、drift check、runtime smoke 与证据自动化流程
