@@ -356,7 +356,21 @@ func seedMenuOfferings(db *gorm.DB) error {
 			return err
 		}
 	}
+	if _, err := upsertPackage(db, models.CommercialPackage{
+		ID:          "pkg_menu_trial_signup",
+		ProductID:   productRecord.ID,
+		Code:        "menu.pkg.trial.signup",
+		Name:        "Menu Signup Trial Package",
+		PackageType: "trial",
+		Status:      platformconst.StatusActive,
+		Metadata:    `{"signup_trial":true,"quota_units":5,"activation_reason":"signup_trial"}`,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}); err != nil {
+		return err
+	}
 	quotaPolicies := []models.QuotaGrantPolicy{
+		{ID: "quota_policy_menu_trial_signup", ProductCode: productRecord.Code, PackageCode: "menu.pkg.trial.signup", BillableItemCode: "menu.render.call", GrantMode: "one_time", Units: 5, Status: platformconst.StatusActive, Metadata: `{"tier":"trial","signup_trial":true}`, CreatedAt: now, UpdatedAt: now},
 		{ID: "quota_policy_menu_sub_basic_monthly", ProductCode: productRecord.Code, PackageCode: "menu.pkg.sub.basic.monthly", BillableItemCode: "menu.render.call", GrantMode: "cycle_reset", Units: 300, ResetCycle: "monthly", Status: platformconst.StatusActive, Metadata: `{"tier":"basic"}`, CreatedAt: now, UpdatedAt: now},
 		{ID: "quota_policy_menu_sub_pro_monthly", ProductCode: productRecord.Code, PackageCode: "menu.pkg.sub.pro.monthly", BillableItemCode: "menu.render.call", GrantMode: "cycle_reset", Units: 3000, ResetCycle: "monthly", Status: platformconst.StatusActive, Metadata: `{"tier":"pro"}`, CreatedAt: now, UpdatedAt: now},
 		{ID: "quota_policy_menu_sub_growth_monthly", ProductCode: productRecord.Code, PackageCode: "menu.pkg.sub.growth.monthly", BillableItemCode: "menu.render.call", GrantMode: "cycle_reset", Units: 8000, ResetCycle: "monthly", Status: platformconst.StatusActive, Metadata: `{"tier":"growth"}`, CreatedAt: now, UpdatedAt: now},
