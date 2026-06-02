@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
-	walletmodule "platform-service/internal/modules/wallet"
 	"platform-service/internal/models"
+	walletmodule "platform-service/internal/modules/wallet"
 	"platform-service/internal/repository"
 
 	"gorm.io/driver/sqlite"
@@ -162,7 +163,7 @@ func newControlTestServiceWithPolicies(t *testing.T) *Service {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&models.QuotaLedger{}, &models.ResourceReservation{}); err != nil {
+	if err := db.AutoMigrate(&models.Product{}, &models.CommercialPackage{}, &models.QuotaLedger{}, &models.ResourceReservation{}); err != nil {
 		t.Fatalf("auto migrate: %v", err)
 	}
 	if err := db.AutoMigrate(&models.AssetDefinition{}, &models.WalletAccount{}, &models.WalletBucket{}, &models.WalletLedger{}); err != nil {
@@ -173,6 +174,81 @@ func newControlTestServiceWithPolicies(t *testing.T) *Service {
 	}
 	walletService := walletmodule.NewService(repository.NewFinanceRepository(db))
 	return NewService(repository.NewControlRepository(db), walletService)
+}
+
+func seedControlPackage(t *testing.T, service *Service, productCode, packageCode, status string) {
+	t.Helper()
+	now := timeNowUTC()
+	product := models.Product{ID: "prod_" + productCode, Code: productCode, Name: productCode, Status: "active", CreatedAt: now, UpdatedAt: now}
+	if err := service.repo.DB().Where("code = ?", productCode).FirstOrCreate(&product).Error; err != nil {
+		t.Fatalf("seed product: %v", err)
+	}
+	pkg := models.CommercialPackage{ID: "pkg_" + packageCode, ProductID: product.ID, Code: packageCode, Name: packageCode, PackageType: "trial", Status: status, CreatedAt: now, UpdatedAt: now}
+	if err := service.repo.DB().Create(&pkg).Error; err != nil {
+		t.Fatalf("seed package: %v", err)
+	}
+}
+
+func timeNowUTC() time.Time { return time.Now().UTC() }
+
+func TestActivatePackageAppliesPoliciesAndIsIdempotent(t *testing.T) {
+	service := newControlTestServiceWithPolicies(t)
+	seedControlPackage(t, service, "menu", "menu.pkg.trial.signup", "active")
+	if _, err := service.CreateQuotaGrantPolicy(CreateQuotaGrantPolicyInput{ProductCode: "menu", PackageCode: "menu.pkg.trial.signup", BillableItemCode: "menu.render.call", GrantMode: "one_time", Units: 5}); err != nil {
+		t.Fatalf("CreateQuotaGrantPolicy: %v", err)
+	}
+	if _, err := service.CreatePackageCapabilityPolicy(CreatePackageCapabilityPolicyInput{ProductCode: "menu", PackageCode: "menu.pkg.trial.signup", CapabilityCode: "template_scope", GrantValue: "free_templates"}); err != nil {
+		t.Fatalf("CreatePackageCapabilityPolicy: %v", err)
+	}
+
+	input := ActivatePackageInput{
+		ProductCode: "menu", PackageCode: "menu.pkg.trial.signup",
+		BillingSubjectType: "organization", BillingSubjectID: "org-signup",
+		ActivationReason: "signup_trial", ReferenceID: "menu:signup_package:user-1:org-signup",
+		Metadata: []byte(`{"user_id":"user-1","source":"menu_signup"}`),
+	}
+	result, err := service.ActivatePackage(input)
+	if err != nil {
+		t.Fatalf("ActivatePackage: %v", err)
+	}
+	if result.PackageCode != input.PackageCode || result.GrantedQuotaUnits != 5 || len(result.QuotaGrants) != 1 || len(result.CapabilityGrants) != 1 {
+		t.Fatalf("unexpected activation result: %+v", result)
+	}
+	balance, err := service.QuotaBalance("organization", "org-signup", "menu.render.call")
+	if err != nil || balance.Available != 5 {
+		t.Fatalf("QuotaBalance after activation: %+v err=%v", balance, err)
+	}
+	capability, err := service.ResolveCapability("menu", "organization", "org-signup", "template_scope")
+	if err != nil || capability.GrantValue != "free_templates" || capability.Grant.Metadata != `{"user_id":"user-1","source":"menu_signup"}` {
+		t.Fatalf("ResolveCapability after activation: %+v err=%v", capability, err)
+	}
+
+	duplicate, err := service.ActivatePackage(input)
+	if err != nil {
+		t.Fatalf("ActivatePackage duplicate: %v", err)
+	}
+	if !duplicate.Idempotent || duplicate.GrantedQuotaUnits != 5 || duplicate.QuotaGrants[0].ID != result.QuotaGrants[0].ID || duplicate.CapabilityGrants[0].ID != result.CapabilityGrants[0].ID {
+		t.Fatalf("duplicate activation was not idempotent: first=%+v duplicate=%+v", result, duplicate)
+	}
+	balance, _ = service.QuotaBalance("organization", "org-signup", "menu.render.call")
+	if balance.Available != 5 {
+		t.Fatalf("duplicate activation changed quota balance: %+v", balance)
+	}
+}
+
+func TestActivatePackageFailsClosedWithoutActivePolicies(t *testing.T) {
+	service := newControlTestServiceWithPolicies(t)
+	seedControlPackage(t, service, "menu", "menu.pkg.no.policy", "active")
+	if _, err := service.ActivatePackage(ActivatePackageInput{ProductCode: "menu", PackageCode: "menu.pkg.no.policy", BillingSubjectType: "organization", BillingSubjectID: "org-1", ReferenceID: "ref-1"}); err == nil {
+		t.Fatalf("expected activation to fail without active policies")
+	}
+	seedControlPackage(t, service, "menu", "menu.pkg.disabled.policy", "active")
+	if _, err := service.CreateQuotaGrantPolicy(CreateQuotaGrantPolicyInput{ProductCode: "menu", PackageCode: "menu.pkg.disabled.policy", BillableItemCode: "menu.render.call", GrantMode: "one_time", Units: 5, Status: "disabled"}); err != nil {
+		t.Fatalf("Create disabled quota policy: %v", err)
+	}
+	if _, err := service.ActivatePackage(ActivatePackageInput{ProductCode: "menu", PackageCode: "menu.pkg.disabled.policy", BillingSubjectType: "organization", BillingSubjectID: "org-1", ReferenceID: "ref-2"}); err == nil {
+		t.Fatalf("expected activation to fail when all policies are disabled")
+	}
 }
 
 func TestQuotaGrantPolicyCRUD(t *testing.T) {

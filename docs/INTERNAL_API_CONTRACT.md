@@ -186,6 +186,13 @@ GET /internal/v1/wallet/accounts?billing_subject_type=organization&billing_subje
   - Creates a product-scoped runtime job and enqueues dispatch atomically.
   - Idempotency is scoped to `product_code + organization_id + source_type + source_id + task_type + idempotency_key`; the same client key may be reused by a different product/org/source/task boundary without colliding.
   - A replay within the same scope returns the existing job. A semantic boundary conflict detected by older clients or stale storage returns HTTP `409` with `RUNTIME_JOB_IDEMPOTENCY_CONFLICT`.
+- `POST /api/v1/controls/package-activations`
+  - Admin/JWT Platform Console route handled by `ActivatePackage`; same request/response envelope and fail-closed semantics as the internal route.
+- `POST /internal/v1/controls/package-activations`
+  - Generic package activation API handled by `ActivatePackage` and used by product backends after they choose a business package/campaign.
+  - Required body: `product_code`, `package_code`, `billing_subject_type`, `billing_subject_id`, stable `reference_id`; optional `activation_reason`, `metadata` (JSON object or JSON string accepted; object metadata is stored as compact JSON).
+  - Response envelope contains `product_code`, `package_code`, `billing_subject_type`, `billing_subject_id`, `activation_reason`, `reference_id`, `quota_grants`, `capability_grants`, `granted_quota_units`, and `idempotent`.
+  - Platform resolves active `quota_grant_policies` and `package_capability_policies`, applies quota/capability grants idempotently by `reference_id`, and fails closed when the package is inactive/missing or has no active policies.
 - `POST /internal/v1/incentives/rewards`
 - `GET /internal/v1/incentives/referral-programs`
 - `POST /internal/v1/incentives/referral-programs`

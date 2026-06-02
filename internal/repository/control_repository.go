@@ -17,6 +17,18 @@ func NewControlRepository(db *gorm.DB) *ControlRepository {
 
 func (r *ControlRepository) DB() *gorm.DB { return r.db }
 
+func (r *ControlRepository) WithTx(tx *gorm.DB) *ControlRepository { return &ControlRepository{db: tx} }
+
+func (r *ControlRepository) LockPackageActivationReference(productCode, subjectType, subjectID, referenceID string) error {
+	if r.db.Dialector.Name() != "postgres" || referenceID == "" {
+		return nil
+	}
+	return r.db.Exec(
+		"SELECT pg_advisory_xact_lock(hashtext(?))",
+		"package_activation:"+productCode+":"+subjectType+":"+subjectID+":"+referenceID,
+	).Error
+}
+
 func (r *ControlRepository) CreateQuotaLedger(item *models.QuotaLedger) error {
 	return r.db.Create(item).Error
 }
@@ -61,6 +73,17 @@ func (r *ControlRepository) FindQuotaGrantPolicyByID(id string) (*models.QuotaGr
 func (r *ControlRepository) FindQuotaGrantPolicyByKey(productCode, packageCode, billableItemCode string) (*models.QuotaGrantPolicy, error) {
 	var item models.QuotaGrantPolicy
 	if err := r.db.Where("product_code = ? AND package_code = ? AND billable_item_code = ?", productCode, packageCode, billableItemCode).First(&item).Error; err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *ControlRepository) FindActiveCommercialPackage(productCode, packageCode string) (*models.CommercialPackage, error) {
+	var item models.CommercialPackage
+	if err := r.db.Model(&models.CommercialPackage{}).
+		Joins("JOIN products ON products.id = commercial_packages.product_id").
+		Where("products.code = ? AND products.status = ? AND commercial_packages.code = ? AND commercial_packages.status = ?", productCode, platformconst.StatusActive, packageCode, platformconst.StatusActive).
+		First(&item).Error; err != nil {
 		return nil, err
 	}
 	return &item, nil
