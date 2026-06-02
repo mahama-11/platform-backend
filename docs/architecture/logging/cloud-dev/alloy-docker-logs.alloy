@@ -1,0 +1,38 @@
+discovery.docker "platform" {
+  host = "unix:///var/run/docker.sock"
+}
+
+loki.source.docker "platform_json_stdout" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.docker.platform.targets
+  forward_to = [loki.process.platform.receiver]
+}
+
+loki.process "platform" {
+  stage.json {
+    expressions = {
+      level = "level",
+      service = "service",
+      component = "component",
+      request_id = "request_id",
+      trace_id = "trace_id",
+    }
+  }
+
+  // Keep request_id/trace_id as structured fields; do not make them Loki labels.
+  stage.labels {
+    values = {
+      level = "level",
+      service = "service",
+      component = "component",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
