@@ -154,7 +154,7 @@
 ## 3. 验证结果
 
 ```
-$ cd v-platform-backend && go test ./... -count=1
+$ cd /root/work/v/platform-backend && go test ./... -count=1
 # 30 个测试包全部通过，0 失败（两轮修复后均通过）
 ```
 

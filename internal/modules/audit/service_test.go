@@ -40,6 +40,9 @@ func TestAuditServiceRecordAndHelpers(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("RecordFromGin: %v", err)
 	}
+	if keys := snapshotKeys(map[string]any{"b": 2, "a": 1}); len(keys) != 2 || keys[0] != "a" || keys[1] != "b" {
+		t.Fatalf("unexpected snapshot keys: %+v", keys)
+	}
 	if encode, _ := encodeSnapshot(map[string]any{"a": 1}); encode == "" {
 		t.Fatalf("expected encoded snapshot")
 	}

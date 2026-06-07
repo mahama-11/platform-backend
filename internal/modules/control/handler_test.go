@@ -80,6 +80,30 @@ func TestControlHandlerErrorPaths(t *testing.T) {
 	}
 }
 
+func TestControlHandlerGrantAndResolveCapability(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := newControlTestServiceWithPolicies(t)
+	handler := NewHandler(service, nil)
+
+	grantResp := performControlJSON(t, handler.GrantCapability, http.MethodPost, "/capability/grant", GrantCapabilityInput{
+		ProductCode:        "product-hg",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-hg",
+		CapabilityCode:     "WATERMARK",
+		GrantValue:         "enabled",
+		SourceType:         "pkg",
+		SourceID:           "pkg-1",
+	})
+	if grantResp.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", grantResp.Code, grantResp.Body.String())
+	}
+
+	resolveResp := performControlQuery(t, handler.ResolveCapability, "/capability/resolve?product_code=product-hg&billing_subject_type=organization&billing_subject_id=org-hg&capability_code=WATERMARK")
+	if resolveResp.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", resolveResp.Code, resolveResp.Body.String())
+	}
+}
+
 func performControlJSON(t *testing.T, fn func(*gin.Context), method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, _ := json.Marshal(body)
@@ -212,28 +236,50 @@ func TestControlHandlerPackageCapabilityPolicyCRUD(t *testing.T) {
 	}
 }
 
-func TestControlHandlerGrantAndResolveCapability(t *testing.T) {
+func TestControlHandlerActivatePackage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service := newControlTestServiceWithPolicies(t)
+	seedControlPackage(t, service, "menu", "menu.pkg.handler.signup", "active")
+	if _, err := service.CreateQuotaGrantPolicy(CreateQuotaGrantPolicyInput{ProductCode: "menu", PackageCode: "menu.pkg.handler.signup", BillableItemCode: "menu.render.call", GrantMode: "one_time", Units: 7}); err != nil {
+		t.Fatalf("CreateQuotaGrantPolicy: %v", err)
+	}
+	if _, err := service.CreatePackageCapabilityPolicy(CreatePackageCapabilityPolicyInput{ProductCode: "menu", PackageCode: "menu.pkg.handler.signup", CapabilityCode: "template_scope", GrantValue: "signup_templates"}); err != nil {
+		t.Fatalf("CreatePackageCapabilityPolicy: %v", err)
+	}
 	handler := NewHandler(service, nil)
 
-	// GrantCapability
-	grantResp := performControlJSON(t, handler.GrantCapability, http.MethodPost, "/capability/grant", GrantCapabilityInput{
-		ProductCode:        "product-hg",
+	resp := performControlJSON(t, handler.ActivatePackage, http.MethodPost, "/packages/activate", ActivatePackageInput{
+		ProductCode:        "menu",
+		PackageCode:        "menu.pkg.handler.signup",
 		BillingSubjectType: "organization",
-		BillingSubjectID:   "org-hg",
-		CapabilityCode:     "WATERMARK",
-		GrantValue:         "enabled",
-		SourceType:         "pkg",
-		SourceID:           "pkg-1",
+		BillingSubjectID:   "org-handler",
+		ActivationReason:   "signup_trial",
+		ReferenceID:        "menu:signup:user-handler:org-handler",
+		Metadata:           []byte(`{"source":"handler-test"}`),
 	})
-	if grantResp.Code != 201 {
-		t.Fatalf("expected 201, got %d: %s", grantResp.Code, grantResp.Body.String())
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", resp.Code, resp.Body.String())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(resp.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal activation response: %v", err)
+	}
+	data := envelope["data"].(map[string]any)
+	if data["package_code"] != "menu.pkg.handler.signup" || data["reference_id"] != "menu:signup:user-handler:org-handler" {
+		t.Fatalf("unexpected activation response: %s", resp.Body.String())
+	}
+	if units := data["granted_quota_units"].(float64); units != 7 {
+		t.Fatalf("expected granted_quota_units=7, got %v body=%s", units, resp.Body.String())
 	}
 
-	// ResolveCapability
-	resolveResp := performControlQuery(t, handler.ResolveCapability, "/capability/resolve?product_code=product-hg&billing_subject_type=organization&billing_subject_id=org-hg&capability_code=WATERMARK")
-	if resolveResp.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", resolveResp.Code, resolveResp.Body.String())
+	duplicate := performControlJSON(t, handler.ActivatePackage, http.MethodPost, "/packages/activate", ActivatePackageInput{
+		ProductCode:        "menu",
+		PackageCode:        "menu.pkg.handler.signup",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-handler",
+		ReferenceID:        "menu:signup:user-handler:org-handler",
+	})
+	if duplicate.Code != http.StatusCreated || !bytes.Contains(duplicate.Body.Bytes(), []byte(`"idempotent":true`)) {
+		t.Fatalf("expected idempotent 201 duplicate activation, got %d: %s", duplicate.Code, duplicate.Body.String())
 	}
 }
