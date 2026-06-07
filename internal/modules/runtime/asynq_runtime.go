@@ -23,8 +23,13 @@ type taskPayload struct {
 	DeliveryID   string `json:"delivery_id,omitempty"`
 }
 
+type asynqClient interface {
+	Enqueue(task *asynq.Task, opts ...asynq.Option) (*asynq.TaskInfo, error)
+	Close() error
+}
+
 type AsynqRuntime struct {
-	client    *asynq.Client
+	client    asynqClient
 	server    *asynq.Server
 	mux       *asynq.ServeMux
 	queueName string
@@ -46,25 +51,13 @@ func NewAsynqRuntime(redisCfg config.RedisConfig, runtimeCfg config.RuntimeConfi
 	}
 	mux := asynq.NewServeMux()
 	mux.HandleFunc(taskTypeDispatch, func(ctx context.Context, task *asynq.Task) error {
-		payload, err := decodeTaskPayload(task)
-		if err != nil {
-			return err
-		}
-		return service.HandleDispatchTask(ctx, payload.RuntimeJobID)
+		return handleRuntimeAsynqTask(ctx, service, taskTypeDispatch, task)
 	})
 	mux.HandleFunc(taskTypePoll, func(ctx context.Context, task *asynq.Task) error {
-		payload, err := decodeTaskPayload(task)
-		if err != nil {
-			return err
-		}
-		return service.HandlePollTask(ctx, payload.RuntimeJobID)
+		return handleRuntimeAsynqTask(ctx, service, taskTypePoll, task)
 	})
 	mux.HandleFunc(taskTypeCallback, func(ctx context.Context, task *asynq.Task) error {
-		payload, err := decodeTaskPayload(task)
-		if err != nil {
-			return err
-		}
-		return service.HandleCallbackTask(ctx, payload.DeliveryID)
+		return handleRuntimeAsynqTask(ctx, service, taskTypeCallback, task)
 	})
 	server := asynq.NewServer(redisOpt, asynq.Config{
 		Concurrency: runtimeCfg.WorkerConcurrency,
@@ -136,6 +129,23 @@ func (r *AsynqRuntime) Shutdown() {
 	}
 	if r.client != nil {
 		_ = r.client.Close()
+	}
+}
+
+func handleRuntimeAsynqTask(ctx context.Context, service *Service, taskType string, task *asynq.Task) error {
+	payload, err := decodeTaskPayload(task)
+	if err != nil {
+		return err
+	}
+	switch taskType {
+	case taskTypeDispatch:
+		return service.HandleDispatchTask(ctx, payload.RuntimeJobID)
+	case taskTypePoll:
+		return service.HandlePollTask(ctx, payload.RuntimeJobID)
+	case taskTypeCallback:
+		return service.HandleCallbackTask(ctx, payload.DeliveryID)
+	default:
+		return fmt.Errorf("unsupported runtime task type: %s", taskType)
 	}
 }
 

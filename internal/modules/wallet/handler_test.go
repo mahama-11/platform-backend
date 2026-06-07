@@ -102,6 +102,61 @@ func TestWalletHandlerErrorPaths(t *testing.T) {
 	}
 }
 
+func TestWalletHandlerAssetAndAllowancePolicyMutationPaths(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service := newWalletTestService(t)
+	handler := NewHandler(service, nil)
+
+	assetResp := performWalletJSON(t, handler.CreateAssetDefinition, http.MethodPost, "/wallet/assets", CreateAssetDefinitionInput{
+		AssetCode:         "MENU_MUTATION",
+		ProductCode:       "menu",
+		AssetType:         "subscription_allowance",
+		LifecycleType:     "cycle_reset",
+		ResetCycle:        "monthly",
+		DefaultExpireDays: 30,
+		Status:            "active",
+	}, nil)
+	if assetResp.Code != http.StatusCreated {
+		t.Fatalf("expected asset create 201, got %d: %s", assetResp.Code, assetResp.Body.String())
+	}
+	days := 45
+	updateAsset := performWalletJSON(t, handler.UpdateAssetDefinition, http.MethodPut, "/wallet/assets/MENU_MUTATION", UpdateAssetDefinitionInput{DefaultExpireDays: &days, Description: "updated", Metadata: `{"tier":"pro"}`}, gin.Params{{Key: "assetCode", Value: "MENU_MUTATION"}})
+	if updateAsset.Code != http.StatusOK || !bytes.Contains(updateAsset.Body.Bytes(), []byte(`"default_expire_days":45`)) {
+		t.Fatalf("expected asset update success, got %d: %s", updateAsset.Code, updateAsset.Body.String())
+	}
+
+	policyResp := performWalletJSON(t, handler.CreateAllowancePolicy, http.MethodPost, "/wallet/policies", CreateAllowancePolicyInput{
+		ProductCode:        "menu",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-wallet-mutation",
+		AssetCode:          "MENU_MUTATION",
+		Amount:             100,
+		ResetCycle:         "monthly",
+		Status:             "active",
+	}, nil)
+	if policyResp.Code != http.StatusCreated {
+		t.Fatalf("expected policy create 201, got %d: %s", policyResp.Code, policyResp.Body.String())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(policyResp.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("unmarshal policy response: %v", err)
+	}
+	policyID := envelope["data"].(map[string]any)["id"].(string)
+	amount := int64(150)
+	updatePolicy := performWalletJSON(t, handler.UpdateAllowancePolicy, http.MethodPut, "/wallet/policies/"+policyID, UpdateAllowancePolicyInput{Amount: &amount, Status: "paused", Metadata: `{"updated":true}`}, gin.Params{{Key: "policyID", Value: policyID}})
+	if updatePolicy.Code != http.StatusOK || !bytes.Contains(updatePolicy.Body.Bytes(), []byte(`"amount":150`)) {
+		t.Fatalf("expected policy update success, got %d: %s", updatePolicy.Code, updatePolicy.Body.String())
+	}
+	deletePolicy := performWalletRawWithParams(t, handler.DeleteAllowancePolicy, http.MethodDelete, "/wallet/policies/"+policyID, nil, gin.Params{{Key: "policyID", Value: policyID}})
+	if deletePolicy.Code != http.StatusOK || !bytes.Contains(deletePolicy.Body.Bytes(), []byte(`"deleted":true`)) {
+		t.Fatalf("expected policy delete success, got %d: %s", deletePolicy.Code, deletePolicy.Body.String())
+	}
+	deleteAsset := performWalletRawWithParams(t, handler.DeleteAssetDefinition, http.MethodDelete, "/wallet/assets/MENU_MUTATION", nil, gin.Params{{Key: "assetCode", Value: "MENU_MUTATION"}})
+	if deleteAsset.Code != http.StatusOK || !bytes.Contains(deleteAsset.Body.Bytes(), []byte(`"deleted":true`)) {
+		t.Fatalf("expected asset delete success, got %d: %s", deleteAsset.Code, deleteAsset.Body.String())
+	}
+}
+
 func performWalletJSON(t *testing.T, fn func(*gin.Context), method, path string, body any, params gin.Params) *httptest.ResponseRecorder {
 	t.Helper()
 	payload, _ := json.Marshal(body)

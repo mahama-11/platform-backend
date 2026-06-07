@@ -70,6 +70,58 @@ func TestHandlerCrudFlows(t *testing.T) {
 	}, gin.Params{{Key: "chargeSessionID", Value: sessionID}})
 }
 
+func TestHandlerListRuntimeCapabilitiesJobsAndChargeSessions(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service, repo, _ := newRuntimeServiceForTest(t)
+	now := time.Now()
+	if err := repo.DB().Create(&models.Product{ID: "prod-menu-handler", Code: "menu", Name: "Menu", Status: "active", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("seed product: %v", err)
+	}
+	if err := repo.CreateProviderDefinition(&models.RuntimeProviderDefinition{ID: "provider-menu-handler", Code: "mock", Name: "Mock", ProviderType: "image_generation", Mode: "async", Status: "active", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("CreateProviderDefinition: %v", err)
+	}
+	if err := repo.CreateProviderBinding(&models.RuntimeProviderBinding{ID: "binding-menu-handler", ProductCode: "menu", TaskType: RuntimeTaskImageGeneration, ProviderCode: "mock", Priority: 1, Enabled: true, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("CreateProviderBinding: %v", err)
+	}
+	if err := repo.CreateProductEndpoint(&models.RuntimeProductEndpoint{ID: "endpoint-menu-handler", ProductCode: "menu", CallbackKind: "menu_internal", BaseURL: "http://127.0.0.1:1", Secret: "secret", Status: "active", CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("CreateProductEndpoint: %v", err)
+	}
+	if err := repo.CreateStorageBinding(&models.StorageBinding{ID: "storage-menu-handler", ProductCode: "menu", Category: "*", ProviderCode: "local", LocalBaseDir: t.TempDir(), Priority: 1, Enabled: true, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("CreateStorageBinding: %v", err)
+	}
+	if err := repo.DB().Create(&models.BillableItem{ID: "billable-menu-image-generation", ProductID: "prod-menu-handler", Code: "menu_runtime_image_generation", Name: "Menu image generation", MeterUnit: "job", BillingScope: "organization", SettlementMode: "postpaid", PricingBehavior: "quota", Status: "active", CreatedAt: now, UpdatedAt: now}).Error; err != nil {
+		t.Fatalf("seed billable item: %v", err)
+	}
+	handler := NewHandler(service, nil)
+
+	capResp := performRuntimeQuery(t, handler.ListRuntimeCapabilities, "/runtime/capabilities?product_code=menu&task_type=image_generation")
+	if capResp.Code != http.StatusOK || !bytes.Contains(capResp.Body.Bytes(), []byte(`"available":true`)) {
+		t.Fatalf("expected available runtime capability, got %d: %s", capResp.Code, capResp.Body.String())
+	}
+	badCapResp := performRuntimeQuery(t, handler.ListRuntimeCapabilities, "/runtime/capabilities?task_type=image_generation")
+	if badCapResp.Code == http.StatusOK {
+		t.Fatalf("expected missing product_code error")
+	}
+
+	job, err := service.CreateRuntimeJob(CreateRuntimeJobInput{ProductCode: "menu", TaskType: RuntimeTaskImageGeneration, ProviderMode: "async", OrganizationID: "org-menu", SourceType: "menu_job", SourceID: "menu-job-handler"})
+	if err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	listJobs := performRuntimeQuery(t, handler.ListRuntimeJobs, "/runtime/jobs?organization_id=org-menu&status=queued&limit=5&offset=0")
+	if listJobs.Code != http.StatusOK || !bytes.Contains(listJobs.Body.Bytes(), []byte(job.ID)) {
+		t.Fatalf("expected listed runtime job %s, got %d: %s", job.ID, listJobs.Code, listJobs.Body.String())
+	}
+
+	session, err := service.CreateChargeSession(CreateChargeSessionInput{SourceType: "runtime_job", SourceID: job.ID, ProductCode: "menu", OrganizationID: "org-menu", UserID: "user-menu", BillingSubjectType: "organization", BillingSubjectID: "org-menu", BillableItemCode: "menu_runtime_image_generation", ResourceType: "quota"})
+	if err != nil {
+		t.Fatalf("CreateChargeSession: %v", err)
+	}
+	listSessions := performRuntimeQuery(t, handler.ListChargeSessions, "/runtime/charge-sessions?organization_id=org-menu&product_code=menu&status=created&limit=5&offset=0")
+	if listSessions.Code != http.StatusOK || !bytes.Contains(listSessions.Body.Bytes(), []byte(session.ID)) {
+		t.Fatalf("expected listed charge session %s, got %d: %s", session.ID, listSessions.Code, listSessions.Body.String())
+	}
+}
+
 func TestHandlerProviderCallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service, repo, _ := newRuntimeServiceForTest(t)
