@@ -144,3 +144,41 @@ func performIdentityRawWithParams(t *testing.T, fn func(*gin.Context), method, p
 	}
 	return w
 }
+
+func TestIdentityHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(newIdentityTestServiceMust(t))
+	cases := []struct {
+		name   string
+		fn     func(*gin.Context)
+		method string
+		path   string
+		params gin.Params
+	}{
+		{"register", handler.Register, http.MethodPost, "/register", nil},
+		{"login", handler.Login, http.MethodPost, "/login", nil},
+		{"create_user", handler.CreateUser, http.MethodPost, "/ops/users", nil},
+		{"update_user", handler.UpdateUser, http.MethodPut, "/ops/users/missing", gin.Params{{Key: "userID", Value: "missing"}}},
+		{"internal_update", handler.InternalUpdateProfile, http.MethodPut, "/internal/profile", gin.Params{{Key: "userID", Value: "missing"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performIdentityRawWithParams(t, tc.fn, tc.method, tc.path, []byte("{bad"), tc.params, nil)
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+	if resp := performIdentityRawWithParams(t, handler.Me, http.MethodGet, "/me", nil, nil, nil); resp.Code == http.StatusOK {
+		t.Fatalf("expected missing user context error")
+	}
+	if resp := performIdentityRawWithParams(t, handler.InternalProfile, http.MethodGet, "/internal/profile", nil, gin.Params{{Key: "userID", Value: "missing"}}, nil); resp.Code == http.StatusOK {
+		t.Fatalf("expected missing internal profile error")
+	}
+}
+
+func newIdentityTestServiceMust(t *testing.T) *Service {
+	t.Helper()
+	service, _ := newIdentityTestService(t)
+	return service
+}

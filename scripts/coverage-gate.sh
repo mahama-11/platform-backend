@@ -78,7 +78,7 @@ report = {
     "strict_target_met": total >= strict_total_target,
     "module_results": module_results,
     "failures": failures,
-    "note": "Default gate enforces the 70% total floor plus verified no-regression floors for core modules. TOTAL_COVERAGE_FLOOR can be set explicitly only for a temporary local override."
+    "note": "Default gate enforces the 80% total statement floor plus verified no-regression floors for core modules. TOTAL_COVERAGE_FLOOR can be set explicitly only for a temporary local override."
 }
 Path(report_path).write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
 print(json.dumps(report, indent=2, ensure_ascii=False))

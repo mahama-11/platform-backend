@@ -1,10 +1,10 @@
 package organization
 
 import (
-	"strconv"
 	"platform-service/internal/telemetry"
 	"platform-service/pkg/platformconst"
 	"platform-service/pkg/response"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 )

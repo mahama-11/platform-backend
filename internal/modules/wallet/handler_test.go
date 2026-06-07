@@ -189,3 +189,39 @@ func performWalletRawWithParams(t *testing.T, fn func(*gin.Context), method, pat
 	}
 	return w
 }
+
+func TestWalletHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(newWalletTestService(t), nil)
+	cases := []struct {
+		name   string
+		fn     func(*gin.Context)
+		method string
+		path   string
+		params gin.Params
+	}{
+		{"create_asset", handler.CreateAssetDefinition, http.MethodPost, "/wallet/assets", nil},
+		{"update_asset", handler.UpdateAssetDefinition, http.MethodPut, "/wallet/assets/BAD", gin.Params{{Key: "assetCode", Value: "BAD"}}},
+		{"create_policy", handler.CreateAllowancePolicy, http.MethodPost, "/wallet/policies", nil},
+		{"update_policy", handler.UpdateAllowancePolicy, http.MethodPut, "/wallet/policies/bad", gin.Params{{Key: "policyID", Value: "bad"}}},
+		{"create_account", handler.CreateAccount, http.MethodPost, "/wallet/accounts", nil},
+		{"post_ledger", handler.PostLedger, http.MethodPost, "/wallet/ledger", nil},
+		{"grant_cycle", handler.GrantCycleAllowance, http.MethodPost, "/wallet/allowance", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performWalletRawWithParams(t, tc.fn, tc.method, tc.path, []byte("{bad"), tc.params)
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+	missingPolicy := performWalletRawWithParams(t, handler.DeleteAllowancePolicy, http.MethodDelete, "/wallet/policies/missing", nil, gin.Params{{Key: "policyID", Value: "missing"}})
+	if missingPolicy.Code == http.StatusOK {
+		t.Fatalf("expected missing policy delete error")
+	}
+	missingAsset := performWalletRawWithParams(t, handler.DeleteAssetDefinition, http.MethodDelete, "/wallet/assets/missing", nil, gin.Params{{Key: "assetCode", Value: "missing"}})
+	if missingAsset.Code == http.StatusOK {
+		t.Fatalf("expected missing asset delete error")
+	}
+}

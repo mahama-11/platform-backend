@@ -75,7 +75,7 @@ const (
 )
 
 const (
-	WalletLifecyclePermanent = "permanent"
-	WalletLifecycleExpiring  = "expiring"
+	WalletLifecyclePermanent  = "permanent"
+	WalletLifecycleExpiring   = "expiring"
 	WalletLifecycleCycleReset = "cycle_reset"
 )

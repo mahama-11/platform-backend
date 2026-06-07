@@ -4,10 +4,9 @@ import (
 	"platform-service/internal/models"
 	"time"
 
-	"platform-service/pkg/platformconst"
 	"gorm.io/gorm"
+	"platform-service/pkg/platformconst"
 )
-
 
 func (r *FinanceRepository) CreateChannelPartner(item *models.ChannelPartner) error {
 	return r.db.Create(item).Error

@@ -188,3 +188,35 @@ func performIncentiveRaw(t *testing.T, fn func(*gin.Context), method, path strin
 	}
 	return w
 }
+
+func TestIncentiveHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(newReferralTestService(t), nil)
+	cases := []struct {
+		name   string
+		fn     func(*gin.Context)
+		method string
+		path   string
+		params gin.Params
+	}{
+		{"create_reward", handler.CreateReward, http.MethodPost, "/rewards", nil},
+		{"update_reward", handler.UpdateReward, http.MethodPut, "/rewards/missing", gin.Params{{Key: "rewardID", Value: "missing"}}},
+		{"create_commission", handler.CreateCommission, http.MethodPost, "/commissions", nil},
+		{"update_commission", handler.UpdateCommission, http.MethodPut, "/commissions/missing", gin.Params{{Key: "commissionID", Value: "missing"}}},
+		{"redeem_commissions", handler.RedeemCommissions, http.MethodPost, "/commissions/redeem", nil},
+		{"create_program", handler.CreateReferralProgram, http.MethodPost, "/programs", nil},
+		{"update_program", handler.UpdateReferralProgram, http.MethodPut, "/programs/missing", gin.Params{{Key: "programID", Value: "missing"}}},
+		{"create_code", handler.CreateReferralCode, http.MethodPost, "/codes", nil},
+		{"update_code", handler.UpdateReferralCode, http.MethodPut, "/codes/missing", gin.Params{{Key: "code", Value: "missing"}}},
+		{"create_conversion", handler.CreateReferralConversion, http.MethodPost, "/conversions", nil},
+		{"update_conversion", handler.UpdateReferralConversion, http.MethodPut, "/conversions/missing", gin.Params{{Key: "conversionID", Value: "missing"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performIncentiveRaw(t, tc.fn, tc.method, tc.path, []byte("{bad"), tc.params)
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+}

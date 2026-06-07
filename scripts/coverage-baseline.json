@@ -1,11 +1,11 @@
 {
-  "total_statement_floor": 70.0,
-  "strict_total_target": 70.0,
+  "total_statement_floor": 80.0,
+  "strict_total_target": 80.0,
   "module_statement_floors": {
-    "runtime": 70.0,
-    "wallet": 68.5,
-    "metering": 70.8,
-    "control": 71.0
+    "runtime": 77.5,
+    "wallet": 80.0,
+    "metering": 78.5,
+    "control": 80.0
   },
   "package_aliases": {
     "runtime": "runtime",
@@ -13,5 +13,5 @@
     "metering": "metering",
     "control": "control"
   },
-  "policy": "Core module floors are set to the verified post-improvement package coverage floor so the gate catches regression immediately. Total floor is now enforced at 70%; use TOTAL_COVERAGE_FLOOR only for an explicit temporary override."
+  "policy": "Core module floors are set from the verified post-improvement package coverage with a small rounding buffer so the gate catches regression immediately. Total statement coverage is enforced at 80%; use TOTAL_COVERAGE_FLOOR only for an explicit temporary local override."
 }

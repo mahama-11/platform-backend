@@ -67,16 +67,16 @@ func TestChannelHandlerCrudAndResolutionFlow(t *testing.T) {
 	performChannelQuery(t, handler.ListChannelCommissionPolicies, "/channel/policies?channel_program_id="+programID+"&product_code=menu_ai&status=active")
 
 	versionResp := performChannelJSON(t, handler.CreateChannelCommissionPolicyVersion, http.MethodPost, "/channel/policy-versions", CreateChannelCommissionPolicyVersionInput{
-		PolicyID:         policyID,
-		VersionCode:      "VERSION_HANDLER",
-		Status:           "active",
-		AppliesTo:        "usage_charge",
-		TriggerType:      "charge_recorded",
-		CommissionBase:   "net_collected_amount",
-		RateType:         "fixed_rate",
-		FixedRateBps:     1200,
-		CooldownDays:     0,
-		SettlementCycle:  "monthly",
+		PolicyID:        policyID,
+		VersionCode:     "VERSION_HANDLER",
+		Status:          "active",
+		AppliesTo:       "usage_charge",
+		TriggerType:     "charge_recorded",
+		CommissionBase:  "net_collected_amount",
+		RateType:        "fixed_rate",
+		FixedRateBps:    1200,
+		CooldownDays:    0,
+		SettlementCycle: "monthly",
 	}, nil)
 	versionID := extractID(t, versionResp)
 	performChannelQuery(t, handler.ListChannelCommissionPolicyVersions, "/channel/policy-versions?policy_id="+policyID+"&status=active")
@@ -285,4 +285,34 @@ func performChannelRaw(t *testing.T, fn func(*gin.Context), method, path string,
 		t.Fatalf("unexpected handler failure for %s %s: status=%d body=%s", method, path, w.Code, w.Body.String())
 	}
 	return w
+}
+
+func TestChannelHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(newChannelTestService(t), nil)
+	cases := []struct {
+		name string
+		fn   func(*gin.Context)
+		path string
+	}{
+		{"partner", handler.CreateChannelPartner, "/channel/partners"},
+		{"program", handler.CreateChannelProgram, "/channel/programs"},
+		{"binding", handler.CreateChannelBinding, "/channel/bindings"},
+		{"policy", handler.CreateChannelCommissionPolicy, "/channel/policies"},
+		{"policy_version", handler.CreateChannelCommissionPolicyVersion, "/channel/policy-versions"},
+		{"policy_assignment", handler.CreateChannelCommissionPolicyAssignment, "/channel/policy-assignments"},
+		{"adjustment", handler.CreateChannelCommissionAdjustment, "/channel/adjustments"},
+		{"preview", handler.PreviewChannelPolicyResolution, "/channel/preview"},
+		{"charge", handler.RecordChannelCharge, "/channel/charges"},
+		{"refund", handler.RecordChannelRefund, "/channel/refunds"},
+		{"settlement", handler.GenerateChannelSettlementBatch, "/channel/settlements"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performChannelRaw(t, tc.fn, http.MethodPost, tc.path, []byte("{bad"), nil)
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
 }

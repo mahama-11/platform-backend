@@ -190,3 +190,53 @@ func TestEnsureProductEndpointRepairsInactiveEndpointAndPreservesSecretPlacehold
 		t.Fatalf("expected repaired endpoint without duplicate, got count=%d", count)
 	}
 }
+
+func TestRuntimeBootstrapConvergesProviderDefinitionBindingAndPlaceholderRules(t *testing.T) {
+	db := newRuntimeFullTestDB(t)
+	repo := repository.NewRuntimeRepository(db)
+	if err := repo.CreateProviderDefinition(&models.RuntimeProviderDefinition{ID: "def-old", Code: "minimax_text", Name: "Old", ProviderType: "runtime", Mode: "async", CredentialRef: "old", Capabilities: `{"old":true}`, Status: "inactive", Metadata: "{}", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+		t.Fatalf("seed provider definition: %v", err)
+	}
+	if err := repo.CreateProviderBinding(&models.RuntimeProviderBinding{ID: "bind-old", ProductCode: "ecommerce", TaskType: "prompt_planning", ProviderCode: "minimax_text", Model: "old-model", CredentialRef: "old", Priority: 10, Enabled: true, Metadata: "{}", CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+		t.Fatalf("seed binding: %v", err)
+	}
+	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Runtime: config.RuntimeBootstrapConfig{
+		ProviderDefinitions: []config.BootstrapRuntimeProviderDefinition{{Code: "minimax_text", Name: "MiniMax", ProviderType: "text_generation", Mode: "sync", CredentialRef: "config:minimax.api_key", Capabilities: `{"json":true}`, Status: "active", Metadata: `{"managed":true}`}},
+		ProductEndpoints:    []config.BootstrapRuntimeProductEndpoint{{ProductCode: "menu", CallbackKind: "menu_internal", BaseURL: "http://menu", Secret: "real-secret", Metadata: `{"managed":true}`}, {ProductCode: "skip-empty", BaseURL: ""}},
+		ProviderBindings: []config.BootstrapRuntimeProviderBinding{
+			{ProductCode: "ecommerce", TaskType: "prompt_planning", ProviderCode: "minimax_text", Model: "MiniMax-M2", CredentialRef: "config:minimax.api_key", Priority: 25, Enabled: false, Metadata: `{"managed":true}`},
+			{ProductCode: "ecommerce", TaskType: "image_understanding", ProviderCode: "gemini_visual_understanding", Priority: 5, Enabled: true},
+			{ProductCode: "", TaskType: "image_generation", ProviderCode: "skip"},
+		},
+	}}}
+	if err := SeedLocalDefaults(db, cfg); err != nil {
+		t.Fatalf("SeedLocalDefaults: %v", err)
+	}
+	def, err := repo.FindProviderDefinitionByCode("minimax_text")
+	if err != nil || def.Name != "MiniMax" || def.Mode != "sync" || def.Status != "active" || def.Metadata != `{"managed":true}` {
+		t.Fatalf("provider definition did not converge: %+v err=%v", def, err)
+	}
+	visual, err := repo.FindProviderDefinitionByCode("gemini_visual_understanding")
+	if err != nil || visual.ProviderType != "image_understanding" || visual.CredentialRef != "config:gemini_visual.api_key" {
+		t.Fatalf("derived visual provider definition mismatch: %+v err=%v", visual, err)
+	}
+	binding, err := repo.FindProviderBinding("ecommerce", "prompt_planning", "minimax_text")
+	if err != nil || binding.Model != "MiniMax-M2" || binding.Priority != 25 || binding.Enabled || binding.Metadata != `{"managed":true}` {
+		t.Fatalf("provider binding did not converge: %+v err=%v", binding, err)
+	}
+	endpoint, err := repo.FindActiveProductEndpoint("menu")
+	if err != nil || endpoint.Secret != "real-secret" || endpoint.Metadata != `{"managed":true}` {
+		t.Fatalf("endpoint mismatch: %+v err=%v", endpoint, err)
+	}
+	if err := ensureProductEndpoint(repo, config.BootstrapRuntimeProductEndpoint{ProductCode: "new-placeholder", CallbackKind: "internal", BaseURL: "http://x", Secret: "change-me"}); err == nil {
+		t.Fatalf("expected placeholder callback secret to be rejected for new endpoint")
+	}
+	if !isPlaceholderSecret("change-me-in-config") || bootstrapSecret("change-me") != "" || bootstrapSecret("real") != "real" {
+		t.Fatalf("unexpected placeholder helper behavior")
+	}
+	for _, code := range []string{"volcengine", "gemini_image_generation", "minimax_image_generation", "unknown"} {
+		if providerTypeForBootstrapCode(code) == "" || providerModeForBootstrapCode(code) == "" {
+			t.Fatalf("expected bootstrap provider helpers for %s", code)
+		}
+	}
+}
