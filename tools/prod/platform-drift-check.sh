@@ -102,6 +102,12 @@ select 'endpoint|' || product_code || '|' || base_url || '|' || status || '|' ||
 select 'binding|' || product_code || '|' || task_type || '|' || provider_code || '|' || priority::text || '|' || enabled::text from runtime_provider_bindings where product_code=$q$ecommerce$q$ and task_type in ($q$text_reasoning$q$,$q$intent_planning$q$,$q$prompt_planning$q$,$q$strategy_report$q$) order by task_type, priority desc, provider_code;
 select 'definition|' || code || '|' || status from runtime_provider_definitions where code in ($q$kimi_coding_text$q$,$q$minimax_text$q$,$q$volcengine$q$,$q$comfyui_bridge$q$) order by code;
 select 'storage|' || product_code || '|' || category || '|' || provider_code || '|' || enabled::text from storage_bindings where (product_code=$q$menu$q$ and category=$q$studio-assets$q$) or (product_code=$q$ecommerce$q$ and category in ($q$ecommerce-assets$q$,$q$template-examples$q$)) order by product_code, category;
+select 'migration|202606010001|' || case when to_regclass($q$schema_migrations$q$) is null then $q$missing_table$q$ when exists(select 1 from schema_migrations where version=202606010001 and name=$q$seed_menu_signup_trial_package$q$) then $q$applied$q$ else $q$pending$q$ end;
+select 'migration|202606070001|' || case when to_regclass($q$schema_migrations$q$) is null then $q$missing_table$q$ when exists(select 1 from schema_migrations where version=202606070001 and name=$q$ensure_menu_signup_trial_contract$q$) then $q$applied$q$ else $q$pending$q$ end;
+select 'signup_package|' || count(*)::text || '|' || coalesce(max(status),$q$missing$q$) from commercial_packages where code=$q$menu.pkg.trial.signup$q$;
+select 'signup_quota|' || count(*)::text || '|' || coalesce(max(status),$q$missing$q$) || '|' || coalesce(max(units),0)::text from quota_grant_policies where product_code=$q$menu$q$ and package_code=$q$menu.pkg.trial.signup$q$ and billable_item_code=$q$menu.render.call$q$;
+select 'signup_capability|' || count(*)::text || '|' || coalesce(max(status),$q$missing$q$) || '|' || coalesce(max(grant_value),$q$$q$) from package_capability_policies where product_code=$q$menu$q$ and package_code=$q$menu.pkg.trial.signup$q$ and capability_code=$q$template_scope$q$;
+select 'template_contract|' || count(*)::text || '|' || coalesce(max(case when jsonb_typeof(raw_json::jsonb -> $q$input_slots$q$)=$q$array$q$ then jsonb_array_length(raw_json::jsonb -> $q$input_slots$q$) else 0 end),0)::text || '|' || coalesce(max(raw_json::jsonb #>> array[$q$strategy_policy$q$,$q$generation_strategy$q$]),$q$$q$) from template_projections where product_code=$q$menu$q$ and template_id=$q$TPL-MENU-001$q$;
 SQL
 DB_CONTAINER="${DB_CONTAINER:-kong-database}"
 DB_USER="${DB_USER:-kong}"
@@ -150,6 +156,26 @@ while IFS='|' read -r kind a b c d e f; do
       ;;
     storage)
       [ "$d" = "true" ] && pass "storage_binding product=$a category=$b provider=$c enabled=true" || crit "storage_binding product=$a category=$b enabled=$d"
+      ;;
+    migration)
+      version=$a; state=$b
+      [ "$state" = "applied" ] && pass "migration version=$version state=applied" || crit "migration version=$version state=$state expected=applied command='go run ./cmd/platform-migrate -config config.prod -command up'"
+      ;;
+    signup_package)
+      count=$a; status=$b
+      [ "$count" != "0" ] && [ "$status" = "active" ] && pass "signup_package code=menu.pkg.trial.signup status=active" || crit "signup_package_missing_or_inactive count=$count status=$status"
+      ;;
+    signup_quota)
+      count=$a; status=$b; units=$c
+      [ "$count" != "0" ] && [ "$status" = "active" ] && [ "${units:-0}" -gt 0 ] && pass "signup_quota package=menu.pkg.trial.signup item=menu.render.call units=$units" || crit "signup_quota_missing_or_invalid count=$count status=$status units=${units:-0}"
+      ;;
+    signup_capability)
+      count=$a; status=$b; grant=$c
+      [ "$count" != "0" ] && [ "$status" = "active" ] && [ "$grant" = "free_templates" ] && pass "signup_capability package=menu.pkg.trial.signup template_scope=$grant" || crit "signup_capability_missing_or_invalid count=$count status=$status grant=${grant:-}"
+      ;;
+    template_contract)
+      count=$a; slots=$b; strategy=$c
+      [ "$count" != "0" ] && [ "${slots:-0}" -ge 4 ] && [ "$strategy" = "multi_image" ] && pass "template_contract template=TPL-MENU-001 slots=$slots strategy=$strategy" || crit "template_contract_missing_or_stale template=TPL-MENU-001 count=$count slots=${slots:-0} strategy=${strategy:-} action='sync Menu template-ops projection after deploy'"
       ;;
   esac
 done <<< "$rows"

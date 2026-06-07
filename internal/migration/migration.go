@@ -152,6 +152,13 @@ func Steps() []Step {
 				return seedMenuOfferings(db)
 			},
 		},
+		{
+			Version: 202606070001,
+			Name:    "ensure_menu_signup_trial_contract",
+			Up: func(db *gorm.DB) error {
+				return seedMenuOfferings(db)
+			},
+		},
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Version < steps[j].Version })
 	return steps

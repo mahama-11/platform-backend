@@ -390,6 +390,7 @@ func seedMenuOfferings(db *gorm.DB) error {
 		}
 	}
 	capabilityPolicies := []models.PackageCapabilityPolicy{
+		{ID: "cap_policy_menu_trial_signup_template_scope", ProductCode: productRecord.Code, PackageCode: "menu.pkg.trial.signup", CapabilityCode: "template_scope", GrantValue: "free_templates", Status: platformconst.StatusActive, Metadata: `{"tier":"trial","signup_trial":true}`, CreatedAt: now, UpdatedAt: now},
 		{ID: "cap_policy_menu_sub_basic_template_scope", ProductCode: productRecord.Code, PackageCode: "menu.pkg.sub.basic.monthly", CapabilityCode: "template_scope", GrantValue: "free_templates", Status: platformconst.StatusActive, Metadata: `{"tier":"basic"}`, CreatedAt: now, UpdatedAt: now},
 		{ID: "cap_policy_menu_sub_pro_template_scope", ProductCode: productRecord.Code, PackageCode: "menu.pkg.sub.pro.monthly", CapabilityCode: "template_scope", GrantValue: "official_templates", Status: platformconst.StatusActive, Metadata: `{"tier":"pro"}`, CreatedAt: now, UpdatedAt: now},
 		{ID: "cap_policy_menu_sub_growth_template_scope", ProductCode: productRecord.Code, PackageCode: "menu.pkg.sub.growth.monthly", CapabilityCode: "template_scope", GrantValue: "all_templates", Status: platformconst.StatusActive, Metadata: `{"tier":"growth"}`, CreatedAt: now, UpdatedAt: now},
