@@ -20,28 +20,33 @@ func (s *Service) listMenuCatalog(ctx context.Context, input ListCatalogInput) (
 		return nil, nil
 	}
 	values := url.Values{}
+	values.Set("source", "local")
 	if q := strings.TrimSpace(input.Query); q != "" {
 		values.Set("query", q)
 	}
-	body, err := s.fetchJSON(ctx, source.BaseURL+"/api/v1/template-center/catalog?"+values.Encode())
+	body, err := s.fetchJSON(ctx, source.BaseURL+"/api/v1/menu/template-center/catalog?"+values.Encode())
 	if err != nil {
 		return nil, err
 	}
 	var payload struct {
 		Items []struct {
-			TemplateID     string   `json:"template_id"`
-			Slug           string   `json:"slug"`
-			Name           string   `json:"name"`
-			Description    string   `json:"description"`
-			Platforms      []string `json:"platforms"`
-			Tags           []string `json:"tags"`
-			RecommendScore int      `json:"recommend_score"`
-			CoverAssetID   string   `json:"cover_asset_id"`
-			Locked         bool     `json:"locked"`
-			Cuisine        string   `json:"cuisine"`
-			DishType       string   `json:"dish_type"`
-			Moods          []string `json:"moods"`
-			PlanRequired   string   `json:"plan_required"`
+			TemplateID     string           `json:"template_id"`
+			Slug           string           `json:"slug"`
+			Name           string           `json:"name"`
+			Description    string           `json:"description"`
+			Platforms      []string         `json:"platforms"`
+			Tags           []string         `json:"tags"`
+			RecommendScore int              `json:"recommend_score"`
+			CoverAssetID   string           `json:"cover_asset_id"`
+			Locked         bool             `json:"locked"`
+			Cuisine        string           `json:"cuisine"`
+			DishType       string           `json:"dish_type"`
+			Moods          []string         `json:"moods"`
+			PlanRequired   string           `json:"plan_required"`
+			BusinessGoal   string           `json:"business_goal"`
+			InputSlots     []map[string]any `json:"input_slots"`
+			TargetOutputs  []map[string]any `json:"target_outputs"`
+			StrategyPolicy map[string]any   `json:"strategy_policy"`
 		} `json:"items"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -50,11 +55,15 @@ func (s *Service) listMenuCatalog(ctx context.Context, input ListCatalogInput) (
 	items := make([]TemplateCatalogItem, 0, len(payload.Items))
 	for _, item := range payload.Items {
 		raw := map[string]any{
-			"cuisine":       item.Cuisine,
-			"dish_type":     item.DishType,
-			"moods":         item.Moods,
-			"plan_required": item.PlanRequired,
-			"locked":        item.Locked,
+			"cuisine":         item.Cuisine,
+			"dish_type":       item.DishType,
+			"moods":           item.Moods,
+			"plan_required":   item.PlanRequired,
+			"locked":          item.Locked,
+			"business_goal":   item.BusinessGoal,
+			"input_slots":     item.InputSlots,
+			"target_outputs":  item.TargetOutputs,
+			"strategy_policy": item.StrategyPolicy,
 		}
 		items = append(items, TemplateCatalogItem{
 			TemplateRef:    buildTemplateRef("menu", item.TemplateID),
@@ -68,6 +77,10 @@ func (s *Service) listMenuCatalog(ctx context.Context, input ListCatalogInput) (
 			RecommendScore: item.RecommendScore,
 			Tags:           item.Tags,
 			Platforms:      item.Platforms,
+			BusinessGoal:   item.BusinessGoal,
+			InputSlots:     item.InputSlots,
+			TargetOutputs:  item.TargetOutputs,
+			StrategyPolicy: item.StrategyPolicy,
 			Raw:            raw,
 		})
 	}
@@ -136,7 +149,7 @@ func (s *Service) listEcommerceCatalog(ctx context.Context, input ListCatalogInp
 
 func (s *Service) getMenuDetail(ctx context.Context, productCode, templateID string) (*TemplateCatalogDetail, error) {
 	source := s.sources[productCode]
-	body, err := s.fetchJSON(ctx, fmt.Sprintf("%s/api/v1/template-center/catalog/%s", source.BaseURL, url.PathEscape(templateID)))
+	body, err := s.fetchJSON(ctx, fmt.Sprintf("%s/api/v1/menu/template-center/catalog/%s?source=local", source.BaseURL, url.PathEscape(templateID)))
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +170,10 @@ func (s *Service) getMenuDetail(ctx context.Context, productCode, templateID str
 	item.Platforms = toStringSlice(payload["platforms"])
 	item.Tags = toStringSlice(payload["tags"])
 	item.RecommendScore = intValue(payload["recommend_score"])
+	item.BusinessGoal = stringValue(payload["business_goal"])
+	item.InputSlots = mapSliceValue(payload["input_slots"])
+	item.TargetOutputs = mapSliceValue(payload["target_outputs"])
+	item.StrategyPolicy = mapValue(payload["strategy_policy"])
 	item.Raw = payload
 	return &TemplateCatalogDetail{
 		Item:      item,

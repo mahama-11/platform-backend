@@ -21,7 +21,10 @@ import (
 func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 	menuServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/template-center/catalog":
+		case "/api/v1/menu/template-center/catalog":
+			if r.URL.Query().Get("source") != "local" {
+				t.Fatalf("expected menu catalog sync to request source=local, got query=%s", r.URL.RawQuery)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code": 0,
 				"data": map[string]any{
@@ -39,11 +42,23 @@ func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 							"dish_type":       "main",
 							"moods":           []string{"warm"},
 							"plan_required":   "pro",
+							"business_goal":   "Generate a printable menu from four restaurant inputs.",
+							"input_slots": []map[string]any{
+								{"role": "dish_photo", "required": true},
+								{"role": "brand_logo", "required": true},
+								{"role": "menu_reference", "required": true},
+								{"role": "style_reference", "required": true},
+							},
+							"target_outputs":  []map[string]any{{"platform": "xiaohongshu", "width": 1242, "height": 1660}},
+							"strategy_policy": map[string]any{"input_mode": "multi_image", "generation_strategy": "multi_image", "provider": "comfyui_bridge"},
 						},
 					},
 				},
 			})
-		case "/api/v1/template-center/catalog/menu-tpl-1":
+		case "/api/v1/menu/template-center/catalog/menu-tpl-1":
+			if r.URL.Query().Get("source") != "local" {
+				t.Fatalf("expected menu detail sync to request source=local, got query=%s", r.URL.RawQuery)
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code": 0,
 				"data": map[string]any{
@@ -54,6 +69,26 @@ func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 					"platforms":       []string{"xiaohongshu"},
 					"tags":            []string{"winter"},
 					"recommend_score": 91,
+					"input_schema": map[string]any{
+						"business_goal": "Generate a printable menu from four restaurant inputs.",
+						"input_slots": []map[string]any{
+							{"role": "dish_photo", "required": true},
+							{"role": "brand_logo", "required": true},
+							{"role": "menu_reference", "required": true},
+							{"role": "style_reference", "required": true},
+						},
+						"target_outputs":  []map[string]any{{"platform": "xiaohongshu", "width": 1242, "height": 1660}},
+						"strategy_policy": map[string]any{"input_mode": "multi_image", "generation_strategy": "multi_image", "provider": "comfyui_bridge"},
+					},
+					"business_goal": "Generate a printable menu from four restaurant inputs.",
+					"input_slots": []map[string]any{
+						{"role": "dish_photo", "required": true},
+						{"role": "brand_logo", "required": true},
+						{"role": "menu_reference", "required": true},
+						{"role": "style_reference", "required": true},
+					},
+					"target_outputs":  []map[string]any{{"platform": "xiaohongshu", "width": 1242, "height": 1660}},
+					"strategy_policy": map[string]any{"input_mode": "multi_image", "generation_strategy": "multi_image", "provider": "comfyui_bridge"},
 				},
 			})
 		default:
@@ -85,7 +120,7 @@ func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 					},
 				},
 			})
-		case "/api/v1/ecommerce/template-center/catalog/ecom-tpl-1":
+		case "/api/v1/ecommerce/template-center/catalog/ecom-tpl-1", "/api/v1/template-center/catalog/ecom-tpl-1":
 			// The live Ecommerce seed can list templates before every detail row has a
 			// complete version/schema. Platform sync should still converge the visible
 			// projection from the list payload instead of failing the whole endpoint.
@@ -144,6 +179,9 @@ func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 	if detail.Item.ProductCode != "menu" {
 		t.Fatalf("expected menu product code, got %s", detail.Item.ProductCode)
 	}
+	assertPlatformFourSlotContract(t, detail.Item.InputSlots, detail.Item.StrategyPolicy)
+	inputSchema, _ := detail.DetailRaw["input_schema"].(map[string]any)
+	assertPlatformFourSlotContract(t, mapSliceValue(inputSchema["input_slots"]), mapValue(inputSchema["strategy_policy"]))
 
 	ecomDetail, err := service.GetDetail(context.Background(), "ecommerce:ecom-tpl-1", "zh")
 	if err != nil {
@@ -173,6 +211,28 @@ func TestTemplateOpsService_ListCatalogAndDetail(t *testing.T) {
 	}
 	if imported.PublishedCount != 1 {
 		t.Fatalf("expected published_count 1, got %d", imported.PublishedCount)
+	}
+}
+
+func assertPlatformFourSlotContract(t *testing.T, slots []map[string]any, strategy map[string]any) {
+	t.Helper()
+	roles := make([]string, 0, len(slots))
+	for _, slot := range slots {
+		if required, ok := slot["required"].(bool); ok && required {
+			roles = append(roles, stringValue(slot["role"]))
+		}
+	}
+	expected := []string{"dish_photo", "brand_logo", "menu_reference", "style_reference"}
+	if len(roles) != len(expected) {
+		t.Fatalf("expected four-slot contract, got roles=%+v slots=%+v", roles, slots)
+	}
+	for idx, role := range expected {
+		if roles[idx] != role {
+			t.Fatalf("unexpected slot roles: got %+v want %+v", roles, expected)
+		}
+	}
+	if strategy["input_mode"] != "multi_image" || strategy["generation_strategy"] != "multi_image" || strategy["provider"] != "comfyui_bridge" {
+		t.Fatalf("expected multi_image/comfyui_bridge strategy, got %+v", strategy)
 	}
 }
 

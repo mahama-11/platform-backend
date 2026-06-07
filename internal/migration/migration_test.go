@@ -161,8 +161,15 @@ func TestSeedMenuOfferings(t *testing.T) {
 	if err := db.Model(&models.PackageCapabilityPolicy{}).Where("product_code = ?", "menu").Count(&capabilityPolicyCount).Error; err != nil {
 		t.Fatalf("count capability policies: %v", err)
 	}
-	if capabilityPolicyCount != 3 {
-		t.Fatalf("capability policy count = %d, want 3", capabilityPolicyCount)
+	if capabilityPolicyCount != 4 {
+		t.Fatalf("capability policy count = %d, want 4", capabilityPolicyCount)
+	}
+	var trialCapability models.PackageCapabilityPolicy
+	if err := db.Where("product_code = ? AND package_code = ? AND capability_code = ?", "menu", "menu.pkg.trial.signup", "template_scope").First(&trialCapability).Error; err != nil {
+		t.Fatalf("load menu signup trial capability policy: %v", err)
+	}
+	if trialCapability.GrantValue != "free_templates" || trialCapability.Status != "active" {
+		t.Fatalf("unexpected signup trial capability policy: %+v", trialCapability)
 	}
 }
 

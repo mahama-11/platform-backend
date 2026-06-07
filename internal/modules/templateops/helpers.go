@@ -34,6 +34,10 @@ func projectionToItem(record models.TemplateProjection) TemplateCatalogItem {
 		Modality:       record.Modality,
 		Scope:          record.Scope,
 		ManagedSource:  record.ManagedSource,
+		BusinessGoal:   stringValue(raw["business_goal"]),
+		InputSlots:     mapSliceValue(raw["input_slots"]),
+		TargetOutputs:  mapSliceValue(raw["target_outputs"]),
+		StrategyPolicy: mapValue(raw["strategy_policy"]),
 		Raw:            raw,
 	}
 }
@@ -158,6 +162,36 @@ func decodeStringJSON(value string) []string {
 	var items []string
 	_ = json.Unmarshal([]byte(value), &items)
 	return items
+}
+
+func mapValue(value any) map[string]any {
+	if result, ok := value.(map[string]any); ok {
+		return result
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var result map[string]any
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return nil
+	}
+	return result
+}
+
+func mapSliceValue(value any) []map[string]any {
+	if result, ok := value.([]map[string]any); ok {
+		return result
+	}
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var result []map[string]any
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return nil
+	}
+	return result
 }
 
 func mustJSONSlice(items []string) []byte {
