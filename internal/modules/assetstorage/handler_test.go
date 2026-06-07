@@ -127,3 +127,31 @@ func performAssetRaw(t *testing.T, fn func(*gin.Context), method, path string, b
 	}
 	return w
 }
+
+func TestAssetStorageHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service, _, _ := newAssetStorageTestService(t)
+	handler := NewHandler(service)
+	cases := []struct {
+		name string
+		fn   func(*gin.Context)
+		path string
+	}{
+		{"upload", handler.UploadAsset, "/assets/upload"},
+		{"register", handler.RegisterAsset, "/assets/register"},
+		{"import_local", handler.ImportLocalAsset, "/assets/import-local"},
+		{"resolve", handler.ResolveAssets, "/assets/resolve"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performAssetRaw(t, tc.fn, http.MethodPost, tc.path, []byte("{bad"))
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+	missingMeta := performAssetQuery(t, handler.GetAssetMetadata, "/assets/meta?storage_key=missing")
+	if missingMeta.Code == http.StatusOK {
+		t.Fatalf("expected missing metadata error")
+	}
+}

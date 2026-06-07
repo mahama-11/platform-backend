@@ -282,3 +282,39 @@ func runtimeExtractID(t *testing.T, resp *httptest.ResponseRecorder) string {
 	}
 	return data["id"].(string)
 }
+
+func TestRuntimeHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service, _, _ := newRuntimeServiceForTest(t)
+	handler := NewHandler(service, nil)
+	cases := []struct {
+		name   string
+		fn     func(*gin.Context)
+		method string
+		path   string
+		params gin.Params
+	}{
+		{"provider", handler.CreateProviderDefinition, http.MethodPost, "/runtime/providers", nil},
+		{"runtime_job", handler.CreateRuntimeJob, http.MethodPost, "/runtime/jobs", nil},
+		{"update_job", handler.UpdateRuntimeJob, http.MethodPut, "/runtime/jobs/missing", gin.Params{{Key: "runtimeJobID", Value: "missing"}}},
+		{"attempt", handler.RecordRuntimeAttempt, http.MethodPost, "/runtime/jobs/missing/attempts", gin.Params{{Key: "runtimeJobID", Value: "missing"}}},
+		{"charge_session", handler.CreateChargeSession, http.MethodPost, "/runtime/charge-sessions", nil},
+		{"update_charge", handler.UpdateChargeSession, http.MethodPut, "/runtime/charge-sessions/missing", gin.Params{{Key: "chargeSessionID", Value: "missing"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performRuntimeRaw(t, tc.fn, tc.method, tc.path, []byte("{bad"), tc.params)
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+	missingJob := performRuntimeRaw(t, handler.GetRuntimeJob, http.MethodGet, "/runtime/jobs/missing", nil, gin.Params{{Key: "runtimeJobID", Value: "missing"}})
+	if missingJob.Code == http.StatusOK {
+		t.Fatalf("expected missing runtime job error")
+	}
+	missingSession := performRuntimeRaw(t, handler.GetChargeSession, http.MethodGet, "/runtime/charge-sessions/missing", nil, gin.Params{{Key: "chargeSessionID", Value: "missing"}})
+	if missingSession.Code == http.StatusOK {
+		t.Fatalf("expected missing charge session error")
+	}
+}

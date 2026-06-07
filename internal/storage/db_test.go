@@ -142,17 +142,80 @@ func TestRunSchemaBootstrapAndInitDBSQLite(t *testing.T) {
 	}
 }
 
+func TestInitDBRunsConfigSyncWhenAutoMigrateDisabled(t *testing.T) {
+	sqlitePath := filepath.Join(t.TempDir(), "platform-sync.db")
+	schemaDB, err := ConnectDB(config.DatabaseConfig{Driver: "sqlite", SQLitePath: sqlitePath, MaxOpenConns: 1, MaxIdleConns: 1})
+	if err != nil {
+		t.Fatalf("ConnectDB schema: %v", err)
+	}
+	if err := RunSchemaBootstrap(schemaDB); err != nil {
+		t.Fatalf("RunSchemaBootstrap schema: %v", err)
+	}
+	if sqlDB, err := schemaDB.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+
+	cfg := &config.Config{
+		GinMode: "release",
+		Database: config.DatabaseConfig{
+			Driver:             "sqlite",
+			SQLitePath:         sqlitePath,
+			AutoMigrateEnabled: false,
+			MaxOpenConns:       1,
+			MaxIdleConns:       1,
+		},
+		Bootstrap: config.BootstrapConfig{
+			SyncEnabled: true,
+			Commercial: config.CommercialBootstrapConfig{
+				Products:      []config.BootstrapProduct{{Code: "ecommerce", Name: "Agent Ecommerce", OwnerTeam: "platform", Metadata: `{"source":"sync"}`}},
+				BillableItems: []config.BootstrapBillableItem{{ProductCode: "ecommerce", Code: "ecommerce_runtime_image_generation", Name: "Image Generation", MeterUnit: "action", SettlementMode: "credits", Status: "active"}},
+			},
+			Runtime: config.RuntimeBootstrapConfig{
+				ProviderBindings: []config.BootstrapRuntimeProviderBinding{{ProductCode: "ecommerce", TaskType: "image_generation", ProviderCode: "minimax_image_generation", Model: "image-01", Priority: 20, Enabled: true, Metadata: `{"tier":"primary"}`}},
+			},
+			Storage: config.StorageBootstrapConfig{
+				Bindings: []config.BootstrapStorageBinding{{ProductCode: "ecommerce", Category: "generated", ProviderCode: "local", LocalBaseDir: filepath.Join(t.TempDir(), "assets"), Priority: 5, Enabled: true, Metadata: `{"class":"generated"}`}},
+			},
+		},
+	}
+	db, err := InitDB(cfg)
+	if err != nil {
+		t.Fatalf("InitDB config sync: %v", err)
+	}
+
+	var product models.Product
+	if err := db.Where("code = ?", "ecommerce").First(&product).Error; err != nil || product.Metadata != `{"source":"sync"}` {
+		t.Fatalf("commercial product sync mismatch: %+v err=%v", product, err)
+	}
+	var billable models.BillableItem
+	if err := db.Where("code = ?", "ecommerce_runtime_image_generation").First(&billable).Error; err != nil || billable.ProductID != product.ID || billable.SettlementMode != "credits" {
+		t.Fatalf("commercial billable sync mismatch: %+v err=%v", billable, err)
+	}
+	var provider models.RuntimeProviderDefinition
+	if err := db.Where("code = ?", "minimax_image_generation").First(&provider).Error; err != nil || provider.ProviderType != "image_generation" {
+		t.Fatalf("runtime provider definition sync mismatch: %+v err=%v", provider, err)
+	}
+	var binding models.RuntimeProviderBinding
+	if err := db.Where("product_code = ? AND task_type = ? AND provider_code = ?", "ecommerce", "image_generation", "minimax_image_generation").First(&binding).Error; err != nil || !binding.Enabled || binding.Priority != 20 || binding.Model != "image-01" {
+		t.Fatalf("runtime provider binding sync mismatch: %+v err=%v", binding, err)
+	}
+	var storageBinding models.StorageBinding
+	if err := db.Where("product_code = ? AND category = ?", "ecommerce", "generated").First(&storageBinding).Error; err != nil || !storageBinding.Enabled || storageBinding.ProviderCode != "local" || storageBinding.Priority != 5 {
+		t.Fatalf("storage binding sync mismatch: %+v err=%v", storageBinding, err)
+	}
+}
+
 func TestInitRedisEnabledFailure(t *testing.T) {
 	_, err := InitRedis(config.RedisConfig{
-		Enabled:       true,
-		Host:          "127.0.0.1",
-		Port:          1,
-		DialTimeout:   50 * time.Millisecond,
-		ReadTimeout:   50 * time.Millisecond,
-		WriteTimeout:  50 * time.Millisecond,
-		MaxRetries:    0,
-		PoolSize:      1,
-		MinIdleConns:  0,
+		Enabled:      true,
+		Host:         "127.0.0.1",
+		Port:         1,
+		DialTimeout:  50 * time.Millisecond,
+		ReadTimeout:  50 * time.Millisecond,
+		WriteTimeout: 50 * time.Millisecond,
+		MaxRetries:   0,
+		PoolSize:     1,
+		MinIdleConns: 0,
 	})
 	if err == nil {
 		t.Fatalf("expected redis ping failure")

@@ -134,3 +134,59 @@ func TestSeedLocalDefaultsConvergesBillableItemProductID(t *testing.T) {
 		t.Fatalf("billable item did not converge name, got %s", item.Name)
 	}
 }
+
+func TestCommercialBootstrapConvergesProductEntityProfileAndBillableFields(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&models.Product{}, &models.CommercialEntity{}, &models.BillingProfile{}, &models.BillableItem{}); err != nil {
+		t.Fatalf("auto migrate: %v", err)
+	}
+	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Commercial: config.CommercialBootstrapConfig{
+		Products:           []config.BootstrapProduct{{Code: "menu", Name: "Menu", Status: "active", OwnerTeam: "menu-team", Metadata: `{"tier":"core"}`}},
+		CommercialEntities: []config.BootstrapCommercialEntity{{Code: "menu-cn", Name: "Menu CN", EntityType: "operator", CountryCode: "CN", Currency: "CNY", Status: "active", Metadata: `{"entity":true}`}},
+		BillingProfiles:    []config.BootstrapBillingProfile{{Code: "bp-menu", ProductCode: "menu", CommercialEntityCode: "menu-cn", RegionScope: "CN", Currency: "CNY", PricingStrategy: "standard", TaxStrategy: "default", Status: "active", Metadata: `{"profile":true}`}},
+		BillableItems:      []config.BootstrapBillableItem{{ProductCode: "menu", Code: "menu_ai_text", Name: "Menu Text", MeterUnit: "request", BillingScope: "organization", SettlementMode: "credits", PricingBehavior: "billable", Status: "active", Metadata: `{"item":true}`}},
+	}}}
+	if err := SeedLocalDefaults(db, cfg); err != nil {
+		t.Fatalf("SeedLocalDefaults create: %v", err)
+	}
+	cfg.Bootstrap.Commercial.Products[0].Name = "Menu Updated"
+	cfg.Bootstrap.Commercial.Products[0].OwnerTeam = "platform"
+	cfg.Bootstrap.Commercial.Products[0].Metadata = `{"tier":"updated"}`
+	cfg.Bootstrap.Commercial.CommercialEntities[0].Name = "Menu CN Updated"
+	cfg.Bootstrap.Commercial.CommercialEntities[0].EntityType = "internal"
+	cfg.Bootstrap.Commercial.CommercialEntities[0].Currency = "USD"
+	cfg.Bootstrap.Commercial.BillingProfiles[0].RegionScope = "GLOBAL"
+	cfg.Bootstrap.Commercial.BillingProfiles[0].Currency = "USD"
+	cfg.Bootstrap.Commercial.BillingProfiles[0].PricingStrategy = "enterprise"
+	cfg.Bootstrap.Commercial.BillingProfiles[0].TaxStrategy = "none"
+	cfg.Bootstrap.Commercial.BillableItems[0].Name = "Menu Text Updated"
+	cfg.Bootstrap.Commercial.BillableItems[0].MeterUnit = "token"
+	cfg.Bootstrap.Commercial.BillableItems[0].BillingScope = "user"
+	cfg.Bootstrap.Commercial.BillableItems[0].SettlementMode = "included_then_overage"
+	cfg.Bootstrap.Commercial.BillableItems[0].PricingBehavior = "child_non_billable"
+	if err := SeedLocalDefaults(db, cfg); err != nil {
+		t.Fatalf("SeedLocalDefaults converge: %v", err)
+	}
+	var product models.Product
+	if err := db.Where("code = ?", "menu").First(&product).Error; err != nil || product.Name != "Menu Updated" || product.OwnerTeam != "platform" || product.Metadata != `{"tier":"updated"}` {
+		t.Fatalf("product mismatch: %+v err=%v", product, err)
+	}
+	var entity models.CommercialEntity
+	if err := db.Where("code = ?", "menu-cn").First(&entity).Error; err != nil || entity.Name != "Menu CN Updated" || entity.EntityType != "internal" || entity.Currency != "USD" {
+		t.Fatalf("entity mismatch: %+v err=%v", entity, err)
+	}
+	var profile models.BillingProfile
+	if err := db.Where("code = ?", "bp-menu").First(&profile).Error; err != nil || profile.RegionScope != "GLOBAL" || profile.Currency != "USD" || profile.PricingStrategy != "enterprise" || profile.TaxStrategy != "none" {
+		t.Fatalf("profile mismatch: %+v err=%v", profile, err)
+	}
+	var item models.BillableItem
+	if err := db.Where("code = ?", "menu_ai_text").First(&item).Error; err != nil || item.Name != "Menu Text Updated" || item.MeterUnit != "token" || item.BillingScope != "user" || item.SettlementMode != "included_then_overage" || item.PricingBehavior != "child_non_billable" {
+		t.Fatalf("billable item mismatch: %+v err=%v", item, err)
+	}
+	if err := SeedLocalDefaults(db, nil); err != nil {
+		t.Fatalf("SeedLocalDefaults nil should noop: %v", err)
+	}
+}

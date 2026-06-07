@@ -487,3 +487,183 @@ func newWalletTestService(t *testing.T) *Service {
 func ptrTime(value time.Time) *time.Time {
 	return &value
 }
+
+func TestWalletAllowancePolicyFullUpdateDeleteAndEffectiveWindows(t *testing.T) {
+	service := newWalletTestService(t)
+	now := time.Date(2026, 6, 7, 12, 0, 0, 0, time.UTC)
+	if err := service.repo.CreateAssetDefinition(&models.AssetDefinition{AssetCode: "ALLOW_FULL", ProductCode: "menu", AssetType: platformconst.WalletAssetTypeSubscriptionAllow, LifecycleType: platformconst.WalletLifecycleCycleReset, ResetCycle: "monthly", Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatalf("seed asset: %v", err)
+	}
+	policy, err := service.CreateAllowancePolicy(CreateAllowancePolicyInput{
+		ProductCode:        "menu",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-policy",
+		AssetCode:          "ALLOW_FULL",
+		Amount:             100,
+		ResetCycle:         "monthly",
+		EffectiveFrom:      now.Add(-time.Hour).Format(time.RFC3339),
+		EffectiveTo:        now.Add(time.Hour).Format(time.RFC3339),
+		Metadata:           `{"source":"initial"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAllowancePolicy: %v", err)
+	}
+	if _, err := service.CreateAllowancePolicy(CreateAllowancePolicyInput{ProductCode: "menu", BillingSubjectType: "organization", BillingSubjectID: "org-policy", AssetCode: "ALLOW_FULL", Amount: 150, ResetCycle: "weekly", Status: "active"}); err != nil {
+		t.Fatalf("CreateAllowancePolicy upsert: %v", err)
+	}
+	if _, err := service.UpdateAllowancePolicy(policy.ID, UpdateAllowancePolicyInput{EffectiveFrom: "bad-time"}); err == nil {
+		t.Fatalf("expected invalid effective_from error")
+	}
+	amount := int64(250)
+	updated, err := service.UpdateAllowancePolicy(policy.ID, UpdateAllowancePolicyInput{
+		ProductCode:        "menu-v2",
+		BillingSubjectType: "organization",
+		BillingSubjectID:   "org-policy-v2",
+		AssetCode:          "ALLOW_FULL",
+		Amount:             &amount,
+		ResetCycle:         "daily",
+		Status:             "paused",
+		EffectiveFrom:      now.Add(-2 * time.Hour).Format(time.RFC3339),
+		EffectiveTo:        now.Add(2 * time.Hour).Format(time.RFC3339),
+		Metadata:           `{"source":"updated"}`,
+	})
+	if err != nil {
+		t.Fatalf("UpdateAllowancePolicy: %v", err)
+	}
+	if updated.Amount != 250 || updated.ResetCycle != "daily" || updated.Status != "paused" || updated.EffectiveFrom == nil || updated.EffectiveTo == nil {
+		t.Fatalf("unexpected updated policy: %+v", updated)
+	}
+	if got, err := service.GetAllowancePolicy(policy.ID); err != nil || got.ID != policy.ID {
+		t.Fatalf("GetAllowancePolicy: %+v err=%v", got, err)
+	}
+	deleted, err := service.DeleteAllowancePolicy(policy.ID)
+	if err != nil || deleted.ID != policy.ID {
+		t.Fatalf("DeleteAllowancePolicy: %+v err=%v", deleted, err)
+	}
+	if _, err := service.DeleteAllowancePolicy(policy.ID); err == nil {
+		t.Fatalf("expected delete missing policy error")
+	}
+	from, to, err := parseEffectiveWindow("", "")
+	if err != nil || from != nil || to != nil {
+		t.Fatalf("empty effective window = %v/%v err=%v", from, to, err)
+	}
+	future := models.AllowancePolicy{EffectiveFrom: ptrTime(now.Add(time.Hour))}
+	expired := models.AllowancePolicy{EffectiveTo: ptrTime(now.Add(-time.Hour))}
+	if allowancePolicyEffective(future, now) || allowancePolicyEffective(expired, now) || !allowancePolicyEffective(models.AllowancePolicy{}, now) {
+		t.Fatalf("unexpected effective window classification")
+	}
+}
+
+func TestWalletScopedQueriesRespectProductAssetDefinitions(t *testing.T) {
+	service := newWalletTestService(t)
+	now := time.Now().UTC()
+	for _, def := range []models.AssetDefinition{
+		{AssetCode: "ECOM_ONLY", ProductCode: "ecommerce", AssetType: platformconst.WalletAssetTypeRewardCredit, LifecycleType: platformconst.WalletLifecycleExpiring, DefaultExpireDays: 1, Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now},
+		{AssetCode: "MENU_ONLY", ProductCode: "menu", AssetType: platformconst.WalletAssetTypeCredit, LifecycleType: platformconst.WalletLifecyclePermanent, Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now},
+	} {
+		if err := service.repo.CreateAssetDefinition(&def); err != nil {
+			t.Fatalf("seed asset %s: %v", def.AssetCode, err)
+		}
+	}
+	if _, _, err := service.PostLedger(PostWalletLedgerInput{BillingSubjectType: "organization", BillingSubjectID: "org-scope", AssetCode: "ECOM_ONLY", AssetType: platformconst.WalletAssetTypeRewardCredit, Direction: platformconst.LedgerDirectionCredit, Amount: 30, ReferenceType: "seed", ReferenceID: "ecom", ExpiresAt: now.Add(time.Hour).Format(time.RFC3339)}); err != nil {
+		t.Fatalf("seed ecommerce wallet: %v", err)
+	}
+	if _, _, err := service.PostLedger(PostWalletLedgerInput{BillingSubjectType: "organization", BillingSubjectID: "org-scope", AssetCode: "MENU_ONLY", AssetType: platformconst.WalletAssetTypeCredit, Direction: platformconst.LedgerDirectionCredit, Amount: 70, ReferenceType: "seed", ReferenceID: "menu"}); err != nil {
+		t.Fatalf("seed menu wallet: %v", err)
+	}
+	accounts, err := service.ListScopedWalletAccounts("organization", "org-scope", "ecommerce", false)
+	if err != nil || len(accounts) != 1 || accounts[0].AssetCode != "ECOM_ONLY" {
+		t.Fatalf("ListScopedWalletAccounts ecommerce: %+v err=%v", accounts, err)
+	}
+	allAccounts, err := service.ListScopedWalletAccounts("organization", "org-scope", "ecommerce", true)
+	if err != nil || len(allAccounts) != 2 {
+		t.Fatalf("ListScopedWalletAccounts includeAll: %+v err=%v", allAccounts, err)
+	}
+	menuAccount, err := service.repo.FindWalletAccount("organization", "org-scope", "MENU_ONLY")
+	if err != nil {
+		t.Fatalf("load menu account: %v", err)
+	}
+	ledgers, err := service.ListScopedWalletLedger(menuAccount.ID, "ecommerce", false)
+	if err != nil || len(ledgers) != 0 {
+		t.Fatalf("expected product-mismatched ledger to be hidden: %+v err=%v", ledgers, err)
+	}
+	ledgers, err = service.ListScopedWalletLedger(menuAccount.ID, "ecommerce", true)
+	if err != nil || len(ledgers) == 0 {
+		t.Fatalf("expected includeAll ledger rows: %+v err=%v", ledgers, err)
+	}
+	if _, err := service.walletAccountMatchesProduct("MISSING_ASSET", "ecommerce"); err == nil {
+		t.Fatalf("expected missing asset match error")
+	}
+}
+
+func TestWalletDebitByPriorityAcrossCreditAssetTypes(t *testing.T) {
+	service := newWalletTestService(t)
+	now := time.Now().UTC()
+	defs := []models.AssetDefinition{
+		{AssetCode: "PERM_CREDIT", ProductCode: "ecommerce", AssetType: platformconst.WalletAssetTypeCredit, LifecycleType: platformconst.WalletLifecyclePermanent, Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now},
+		{AssetCode: "REWARD_CREDIT", ProductCode: "ecommerce", AssetType: platformconst.WalletAssetTypeRewardCredit, LifecycleType: platformconst.WalletLifecycleExpiring, DefaultExpireDays: 1, Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now},
+		{AssetCode: "ALLOW_CREDIT", ProductCode: "ecommerce", AssetType: platformconst.WalletAssetTypeSubscriptionAllow, LifecycleType: platformconst.WalletLifecycleCycleReset, ResetCycle: "monthly", Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now},
+		{AssetCode: "COUPON_ONLY", ProductCode: "ecommerce", AssetType: "coupon", LifecycleType: platformconst.WalletLifecyclePermanent, Status: platformconst.StatusActive, CreatedAt: now, UpdatedAt: now},
+	}
+	for i := range defs {
+		if err := service.repo.CreateAssetDefinition(&defs[i]); err != nil {
+			t.Fatalf("seed def %s: %v", defs[i].AssetCode, err)
+		}
+	}
+	seeds := []PostWalletLedgerInput{
+		{AssetCode: "PERM_CREDIT", AssetType: platformconst.WalletAssetTypeCredit, Amount: 50},
+		{AssetCode: "REWARD_CREDIT", AssetType: platformconst.WalletAssetTypeRewardCredit, Amount: 40, ExpiresAt: now.Add(24 * time.Hour).Format(time.RFC3339)},
+		{AssetCode: "ALLOW_CREDIT", AssetType: platformconst.WalletAssetTypeSubscriptionAllow, Amount: 30, CycleKey: buildCycleKey("monthly", now)},
+		{AssetCode: "COUPON_ONLY", AssetType: "coupon", Amount: 999},
+	}
+	for _, seed := range seeds {
+		seed.BillingSubjectType = "organization"
+		seed.BillingSubjectID = "org-priority"
+		seed.Direction = platformconst.LedgerDirectionCredit
+		seed.ReferenceType = "seed"
+		seed.ReferenceID = "seed-" + seed.AssetCode
+		if _, _, err := service.PostLedger(seed); err != nil {
+			t.Fatalf("seed %s: %v", seed.AssetCode, err)
+		}
+	}
+	if balance, err := service.SpendableCreditsBalance("organization", "org-priority", now); err != nil || balance != 120 {
+		t.Fatalf("SpendableCreditsBalance = %d err=%v, want 120", balance, err)
+	}
+	var debited int64
+	var used string
+	var breakdown []DebitBreakdown
+	err := service.repo.DB().Transaction(func(tx *gorm.DB) error {
+		var err error
+		debited, used, breakdown, err = service.DebitByPriorityTx(tx, "organization", "org-priority", "ecommerce", "", 85, "usage", "event", "evt-priority", `{"trace":"priority"}`)
+		return err
+	})
+	if err != nil {
+		accounts, _ := service.repo.ListWalletAccounts("organization", "org-priority")
+		for _, account := range accounts {
+			buckets, _ := service.repo.ListWalletBuckets(account.ID, "")
+			t.Logf("account=%+v buckets=%+v", account, buckets)
+		}
+		t.Fatalf("DebitByPriorityTx: %v debited=%d used=%s breakdown=%+v", err, debited, used, breakdown)
+	}
+	if debited != 85 || used != "ALLOW_CREDIT" {
+		t.Fatalf("unexpected debit summary: debited=%d used=%s breakdown=%+v", debited, used, breakdown)
+	}
+	want := map[string]int64{"ALLOW_CREDIT": 30, "REWARD_CREDIT": 40, "PERM_CREDIT": 15}
+	if len(breakdown) != len(want) {
+		t.Fatalf("breakdown len=%d want=%d: %+v", len(breakdown), len(want), breakdown)
+	}
+	for _, item := range breakdown {
+		if want[item.AssetCode] != item.Amount {
+			t.Fatalf("breakdown[%s]=%d want=%d full=%+v", item.AssetCode, item.Amount, want[item.AssetCode], breakdown)
+		}
+	}
+	if _, _, _, err := service.DebitByPriorityTx(service.repo.DB(), "organization", "org-priority", "ecommerce", "", 10_000, "usage", "event", "evt-too-much", "{}"); !errors.Is(err, ErrInsufficientWalletBalance) {
+		t.Fatalf("expected insufficient balance after oversized priority debit, got %v", err)
+	}
+	if got := creditAssetTypePriority("coupon"); got != 3 || !isCreditAssetType("") || isCreditAssetType("coupon") {
+		t.Fatalf("unexpected credit helper classification")
+	}
+	if got := buildDebitBreakdownSlice(map[string]int64{"b": 2, "a": 1}); len(got) != 2 || got[0].AssetCode != "a" || got[1].AssetCode != "b" {
+		t.Fatalf("unexpected sorted breakdown: %+v", got)
+	}
+}

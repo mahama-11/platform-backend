@@ -43,24 +43,28 @@ type ListCatalogInput struct {
 }
 
 type TemplateCatalogItem struct {
-	TemplateRef    string         `json:"template_ref"`
-	ProductCode    string         `json:"product_code"`
-	TemplateID     string         `json:"template_id"`
-	Slug           string         `json:"slug"`
-	Name           string         `json:"name"`
-	Summary        string         `json:"summary"`
-	Status         string         `json:"status"`
-	CoverAssetURL  string         `json:"cover_asset_url,omitempty"`
-	CoverAssetID   string         `json:"cover_asset_id,omitempty"`
-	RecommendScore int            `json:"recommend_score"`
-	Tags           []string       `json:"tags,omitempty"`
-	Platforms      []string       `json:"platforms,omitempty"`
-	Series         string         `json:"series,omitempty"`
-	CapabilityType string         `json:"capability_type,omitempty"`
-	Modality       string         `json:"modality,omitempty"`
-	Scope          string         `json:"scope,omitempty"`
-	ManagedSource  string         `json:"managed_source,omitempty"`
-	Raw            map[string]any `json:"raw,omitempty"`
+	TemplateRef    string           `json:"template_ref"`
+	ProductCode    string           `json:"product_code"`
+	TemplateID     string           `json:"template_id"`
+	Slug           string           `json:"slug"`
+	Name           string           `json:"name"`
+	Summary        string           `json:"summary"`
+	Status         string           `json:"status"`
+	CoverAssetURL  string           `json:"cover_asset_url,omitempty"`
+	CoverAssetID   string           `json:"cover_asset_id,omitempty"`
+	RecommendScore int              `json:"recommend_score"`
+	Tags           []string         `json:"tags,omitempty"`
+	Platforms      []string         `json:"platforms,omitempty"`
+	Series         string           `json:"series,omitempty"`
+	CapabilityType string           `json:"capability_type,omitempty"`
+	Modality       string           `json:"modality,omitempty"`
+	Scope          string           `json:"scope,omitempty"`
+	ManagedSource  string           `json:"managed_source,omitempty"`
+	BusinessGoal   string           `json:"business_goal,omitempty"`
+	InputSlots     []map[string]any `json:"input_slots,omitempty"`
+	TargetOutputs  []map[string]any `json:"target_outputs,omitempty"`
+	StrategyPolicy map[string]any   `json:"strategy_policy,omitempty"`
+	Raw            map[string]any   `json:"raw,omitempty"`
 }
 
 type TemplateCatalogListResult struct {

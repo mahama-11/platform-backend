@@ -14,9 +14,9 @@ import (
 	"time"
 
 	"platform-service/internal/config"
+	"platform-service/internal/models"
 	access "platform-service/internal/modules/access"
 	identity "platform-service/internal/modules/identity"
-	"platform-service/internal/models"
 	"platform-service/internal/repository"
 	"platform-service/pkg/internalauth"
 	"platform-service/pkg/platformconst"

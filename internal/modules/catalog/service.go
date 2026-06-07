@@ -47,9 +47,9 @@ type UpdateSKUInput struct {
 	SKUType     string `json:"sku_type"`
 	BillingMode string `json:"billing_mode"`
 	Currency    string `json:"currency"`
-	ListPrice   *int64  `json:"list_price"`
-	Status      string  `json:"status"`
-	Metadata    string  `json:"metadata"`
+	ListPrice   *int64 `json:"list_price"`
+	Status      string `json:"status"`
+	Metadata    string `json:"metadata"`
 }
 
 type CreateBillableItemInput struct {

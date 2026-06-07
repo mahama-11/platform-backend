@@ -146,3 +146,31 @@ func performMeteringRaw(t *testing.T, fn func(*gin.Context), method, path string
 	}
 	return w
 }
+
+func TestMeteringHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service, _ := newTestService(t)
+	handler := NewHandler(service, nil)
+	cases := []struct {
+		name   string
+		fn     func(*gin.Context)
+		method string
+		path   string
+		params gin.Params
+	}{
+		{"ingest", handler.IngestEvent, http.MethodPost, "/events", nil},
+		{"finalize", handler.Finalize, http.MethodPost, "/finalize", nil},
+		{"reverse", handler.ReverseSettlement, http.MethodPost, "/settlements/missing/reverse", gin.Params{{Key: "eventID", Value: "missing"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performMeteringRaw(t, tc.fn, tc.method, tc.path, []byte("{bad"), tc.params)
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+	if resp := performMeteringQuery(t, handler.GetSettlement, "/settlements/missing"); resp.Code == http.StatusOK {
+		t.Fatalf("expected missing settlement error")
+	}
+}

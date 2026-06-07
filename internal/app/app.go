@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"platform-service/internal/config"
+	"platform-service/internal/migration"
 	access "platform-service/internal/modules/access"
 	assetstorage "platform-service/internal/modules/assetstorage"
 	audit "platform-service/internal/modules/audit"
@@ -49,6 +50,11 @@ func New(configFile string) (*App, error) {
 	db, err := storage.InitDB(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open storage: %w", err)
+	}
+	if cfg.Database.AutoMigrateEnabled {
+		if err := migration.Up(db); err != nil {
+			return nil, fmt.Errorf("run versioned migrations: %w", err)
+		}
 	}
 	redisClient, err := storage.InitRedis(cfg.Redis)
 	if err != nil {

@@ -625,17 +625,13 @@ func TestHandlerCRUDExtended(t *testing.T) {
 
 func TestGetSKUAndGetBillableItem(t *testing.T) {
 	service, _ := newCatalogTestService(t)
-
 	product, err := service.CreateProduct(CreateProductInput{Code: "get-test-prod", Name: "Get Test Product"})
 	if err != nil {
 		t.Fatalf("CreateProduct: %v", err)
 	}
 
 	// GetSKU
-	sku, err := service.CreateSKU(CreateSKUInput{
-		ProductID: product.ID, Code: "get-sku-1", Name: "Get SKU",
-		SKUType: "package", BillingMode: "prepaid",
-	})
+	sku, err := service.CreateSKU(CreateSKUInput{ProductID: product.ID, Code: "get-sku-1", Name: "Get SKU", SKUType: "package", BillingMode: "prepaid"})
 	if err != nil {
 		t.Fatalf("CreateSKU: %v", err)
 	}
@@ -667,5 +663,55 @@ func TestGetSKUAndGetBillableItem(t *testing.T) {
 	}
 	if _, err := service.GetBillableItem("nonexistent"); err == nil {
 		t.Fatalf("expected GetBillableItem not-found error")
+	}
+}
+
+func TestCatalogHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	service, repo := newCatalogTestService(t)
+	handler := NewHandler(service, repository.NewFinanceRepository(repo.DB()), nil)
+	cases := []struct {
+		name   string
+		fn     func(*gin.Context)
+		method string
+		path   string
+		params gin.Params
+	}{
+		{"create_product", handler.CreateProduct, http.MethodPost, "/products", nil},
+		{"update_product", handler.UpdateProduct, http.MethodPut, "/products/missing", gin.Params{{Key: "productID", Value: "missing"}}},
+		{"create_sku", handler.CreateSKU, http.MethodPost, "/skus", nil},
+		{"update_sku", handler.UpdateSKU, http.MethodPut, "/skus/missing", gin.Params{{Key: "skuID", Value: "missing"}}},
+		{"create_billable_item", handler.CreateBillableItem, http.MethodPost, "/items", nil},
+		{"update_billable_item", handler.UpdateBillableItem, http.MethodPut, "/items/missing", gin.Params{{Key: "billableItemID", Value: "missing"}}},
+		{"create_package", handler.CreatePackage, http.MethodPost, "/packages", nil},
+		{"update_package", handler.UpdatePackage, http.MethodPut, "/packages/missing", gin.Params{{Key: "packageID", Value: "missing"}}},
+		{"create_rate_card", handler.CreateRateCard, http.MethodPost, "/rate-cards", nil},
+		{"update_rate_card", handler.UpdateRateCard, http.MethodPut, "/rate-cards/missing", gin.Params{{Key: "rateCardID", Value: "missing"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performCatalogRaw(t, tc.fn, tc.method, tc.path, []byte("{bad"), tc.params)
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name string
+		fn   func(*gin.Context)
+		path string
+		key  string
+	}{
+		{"delete_product", handler.DeleteProduct, "/products/missing", "productID"},
+		{"delete_sku", handler.DeleteSKU, "/skus/missing", "skuID"},
+		{"delete_billable_item", handler.DeleteBillableItem, "/items/missing", "billableItemID"},
+		{"delete_rate_card", handler.DeleteRateCard, "/rate-cards/missing", "rateCardID"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performCatalogRaw(t, tc.fn, http.MethodDelete, tc.path, nil, gin.Params{{Key: tc.key, Value: "missing"}})
+			if resp.Code == http.StatusOK {
+				t.Fatalf("expected missing delete error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
 	}
 }

@@ -283,3 +283,31 @@ func TestControlHandlerActivatePackage(t *testing.T) {
 		t.Fatalf("expected idempotent 201 duplicate activation, got %d: %s", duplicate.Code, duplicate.Body.String())
 	}
 }
+
+func TestControlHandlerBindErrorMatrix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	handler := NewHandler(newControlTestServiceWithPolicies(t), nil)
+	cases := []struct {
+		name string
+		fn   func(*gin.Context)
+		path string
+	}{
+		{"grant_quota", handler.GrantQuota, "/quota"},
+		{"grant_credits", handler.GrantCredits, "/credits"},
+		{"create_quota_policy", handler.CreateQuotaGrantPolicy, "/policies/quota"},
+		{"update_quota_policy", handler.UpdateQuotaGrantPolicy, "/policies/quota/missing"},
+		{"create_capability_policy", handler.CreatePackageCapabilityPolicy, "/policies/capability"},
+		{"update_capability_policy", handler.UpdatePackageCapabilityPolicy, "/policies/capability/missing"},
+		{"grant_capability", handler.GrantCapability, "/capability/grant"},
+		{"activate_package", handler.ActivatePackage, "/packages/activate"},
+		{"reserve", handler.Reserve, "/reserve"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := performControlRaw(t, tc.fn, http.MethodPost, tc.path, []byte("{bad"))
+			if resp.Code == http.StatusOK || resp.Code == http.StatusCreated {
+				t.Fatalf("expected bind error, got %d: %s", resp.Code, resp.Body.String())
+			}
+		})
+	}
+}

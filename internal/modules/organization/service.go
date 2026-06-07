@@ -79,18 +79,18 @@ type UpsertMembershipInput struct {
 }
 
 type OrganizationMemberRecord struct {
-	ID               string    `json:"id"`
-	OrganizationID   string    `json:"organization_id"`
-	UserID           string    `json:"user_id"`
-	UserEmail        string    `json:"user_email"`
-	UserFullName     string    `json:"user_full_name"`
-	UserStatus       string    `json:"user_status"`
-	UserAvatarURL    string    `json:"user_avatar_url"`
-	Role             string    `json:"role"`
-	Status           string    `json:"status"`
-	IsCurrentOwner   bool      `json:"is_current_owner"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	OrganizationID string    `json:"organization_id"`
+	UserID         string    `json:"user_id"`
+	UserEmail      string    `json:"user_email"`
+	UserFullName   string    `json:"user_full_name"`
+	UserStatus     string    `json:"user_status"`
+	UserAvatarURL  string    `json:"user_avatar_url"`
+	Role           string    `json:"role"`
+	Status         string    `json:"status"`
+	IsCurrentOwner bool      `json:"is_current_owner"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type OrganizationMemberListResult struct {
