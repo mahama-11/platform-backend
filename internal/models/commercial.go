@@ -107,7 +107,7 @@ type CapabilityGrant struct {
 	CapabilityCode     string     `gorm:"index;not null" json:"capability_code"`
 	GrantValue         string     `gorm:"type:varchar(128);not null" json:"grant_value"`
 	SourceType         string     `gorm:"type:varchar(64);index" json:"source_type"`
-	SourceID           string     `gorm:"type:varchar(64);index" json:"source_id"`
+	SourceID           string     `gorm:"type:varchar(191);index" json:"source_id"`
 	Status             string     `gorm:"index;not null" json:"status"`
 	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
 	Metadata           string     `gorm:"type:text" json:"metadata"`

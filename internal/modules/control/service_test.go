@@ -3,6 +3,7 @@ package control
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,10 +202,11 @@ func TestActivatePackageAppliesPoliciesAndIsIdempotent(t *testing.T) {
 		t.Fatalf("CreatePackageCapabilityPolicy: %v", err)
 	}
 
+	longReferenceID := "menu:signup_package:user-" + strings.Repeat("x", 72) + ":org-signup"
 	input := ActivatePackageInput{
 		ProductCode: "menu", PackageCode: "menu.pkg.trial.signup",
 		BillingSubjectType: "organization", BillingSubjectID: "org-signup",
-		ActivationReason: "signup_trial", ReferenceID: "menu:signup_package:user-1:org-signup",
+		ActivationReason: "signup_trial", ReferenceID: longReferenceID,
 		Metadata: []byte(`{"user_id":"user-1","source":"menu_signup"}`),
 	}
 	result, err := service.ActivatePackage(input)
@@ -213,6 +215,9 @@ func TestActivatePackageAppliesPoliciesAndIsIdempotent(t *testing.T) {
 	}
 	if result.PackageCode != input.PackageCode || result.GrantedQuotaUnits != 5 || len(result.QuotaGrants) != 1 || len(result.CapabilityGrants) != 1 {
 		t.Fatalf("unexpected activation result: %+v", result)
+	}
+	if result.CapabilityGrants[0].SourceID != longReferenceID || len(result.CapabilityGrants[0].SourceID) <= 64 {
+		t.Fatalf("capability activation should preserve long reference source id: %+v", result.CapabilityGrants[0])
 	}
 	balance, err := service.QuotaBalance("organization", "org-signup", "menu.render.call")
 	if err != nil || balance.Available != 5 {

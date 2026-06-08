@@ -159,6 +159,13 @@ func Steps() []Step {
 				return seedMenuOfferings(db)
 			},
 		},
+		{
+			Version: 202606080001,
+			Name:    "widen_capability_grant_source_id",
+			Up: func(db *gorm.DB) error {
+				return widenCapabilityGrantSourceID(db)
+			},
+		},
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Version < steps[j].Version })
 	return steps
@@ -261,4 +268,19 @@ func scopeRuntimeJobIdempotencyKey(db *gorm.DB) error {
 		}
 	}
 	return db.AutoMigrate(&models.RuntimeJob{})
+}
+
+func widenCapabilityGrantSourceID(db *gorm.DB) error {
+	if !db.Migrator().HasTable(&models.CapabilityGrant{}) {
+		return db.AutoMigrate(&models.CapabilityGrant{})
+	}
+
+	switch db.Dialector.Name() {
+	case "postgres":
+		return db.Exec("ALTER TABLE capability_grants ALTER COLUMN source_id TYPE varchar(191)").Error
+	case "mysql":
+		return db.Exec("ALTER TABLE capability_grants MODIFY COLUMN source_id varchar(191)").Error
+	default:
+		return db.AutoMigrate(&models.CapabilityGrant{})
+	}
 }
