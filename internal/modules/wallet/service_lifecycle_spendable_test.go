@@ -118,3 +118,10 @@ func TestWalletLifecycleLoopsRespectCancelledContext(t *testing.T) {
 		t.Fatalf("wallet lifecycle loops did not exit after cancelled context")
 	}
 }
+
+func TestStartLifecycleSchedulerIgnoresCancelledContext(t *testing.T) {
+	service := newWalletTestService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	service.StartLifecycleScheduler(ctx, 0, -time.Second)
+}

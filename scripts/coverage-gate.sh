@@ -22,8 +22,20 @@ if [[ ${#TEST_PACKAGES[@]} -eq 0 ]]; then
   echo '[coverage-gate] no test packages found' >&2
   exit 1
 fi
-# Keep stderr in the log as Go may print package-level coverage diagnostics there.
-go test "${TEST_PACKAGES[@]}" -count=1 -covermode=atomic -coverprofile="$PROFILE" 2>&1 | tee "$LOG"
+: > "$LOG"
+printf 'mode: atomic\n' > "$PROFILE"
+PKG_PROFILE_DIR="$OUT_DIR/package-profiles"
+rm -rf "$PKG_PROFILE_DIR"
+mkdir -p "$PKG_PROFILE_DIR"
+for pkg in "${TEST_PACKAGES[@]}"; do
+  safe_pkg=${pkg//[^A-Za-z0-9_.-]/_}
+  pkg_profile="$PKG_PROFILE_DIR/${safe_pkg}.out"
+  # Run packages one-by-one. The all-package coverprofile form can make independent
+  # SQLite-heavy package tests contend and exceed the CI/local timeout; per-package
+  # profiles preserve the same gate semantics while avoiding cross-package DB locks.
+  go test "$pkg" -count=1 -covermode=atomic -coverprofile="$pkg_profile" 2>&1 | tee -a "$LOG"
+  awk 'NR > 1' "$pkg_profile" >> "$PROFILE"
+done
 go tool cover -func="$PROFILE" > "$FUNC"
 
 python3 - "$LOG" "$FUNC" "$BASELINE_FILE" "$REPORT" "$TOTAL_FLOOR" "$STRICT_TOTAL_TARGET" <<'PY'
