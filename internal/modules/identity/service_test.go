@@ -46,6 +46,17 @@ func TestIdentityServiceRegisterLoginAndProfileFlow(t *testing.T) {
 	if err != nil || result.AccessToken == "" || result.User.Email != "alice@example.com" {
 		t.Fatalf("Register: %+v err=%v", result, err)
 	}
+	if result.User.OrgID == "" || result.User.LastActiveOrgID != result.User.OrgID || result.User.OrgRole != "owner" || result.User.PlanID != "starter" {
+		t.Fatalf("registered user must receive default owner org context, got %+v", result.User)
+	}
+	var org models.Organization
+	if err := repo.DB().Where("id = ? AND status = ? AND owner_id = ?", result.User.OrgID, "active", result.User.ID).First(&org).Error; err != nil {
+		t.Fatalf("registered org context not persisted: %v", err)
+	}
+	var member models.OrganizationMember
+	if err := repo.DB().Where("organization_id = ? AND user_id = ? AND role = ? AND status = ?", result.User.OrgID, result.User.ID, "owner", "active").First(&member).Error; err != nil {
+		t.Fatalf("registered owner membership not persisted: %v", err)
+	}
 	if _, err := service.Register(RegisterInput{
 		FullName: "Alice",
 		Email:    "alice@example.com",

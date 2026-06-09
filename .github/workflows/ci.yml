@@ -57,5 +57,8 @@ jobs:
       - name: Run full test suite
         run: ./scripts/test-all.sh
 
+      - name: Run business correctness oracle gate
+        run: python3 ./scripts/business-correctness-gate.py
+
       - name: Run coverage gate
         run: ./scripts/coverage-gate.sh

@@ -1,6 +1,7 @@
 bin/
 dist/
 coverage/
+reports/
 data/
 .env
 .DS_Store
@@ -12,4 +13,5 @@ platform-service-linux
 migrate
 config.local.yaml
 *.out
+__pycache__/
 testdata
