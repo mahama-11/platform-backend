@@ -26,6 +26,7 @@ services:
   dev-backend:
     image: ver/v-platform-backend:${DEV_TAG:-dev}
     container_name: v-platform-backend-dev
+    command: ["./platform-service", "-config", "config.dev"]
     restart: unless-stopped
     ports:
       - "8195:8195"
@@ -36,6 +37,7 @@ services:
       - shared-network
     volumes:
       - ./config.dev.yaml:/app/config.dev.yaml:ro
+      - ${PLATFORM_PAI_VIDEO_API_KEY_FILE:-/root/.hermes/secrets/pai_video_api_key}:/run/secrets/pai_video_api_key:ro
       - /data:/app/data
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8195/healthz || exit 1"]
