@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +20,6 @@ import (
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	gormlogger "gorm.io/gorm/logger"
 )
 
 func InitDB(appCfg *config.Config) (*gorm.DB, error) {
@@ -83,15 +81,8 @@ func RunConfigSyncBootstrap(db *gorm.DB, appCfg *config.Config) error {
 }
 
 func ConnectDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
-	newLogger := gormlogger.New(
-		log.New(os.Stdout, "", log.LstdFlags),
-		gormlogger.Config{
-			SlowThreshold:             time.Second,
-			LogLevel:                  gormlogger.Info,
-			IgnoreRecordNotFoundError: true,
-			Colorful:                  false,
-		},
-	)
+	newLogger := newStructuredGormLogger(cfg)
+	gormCfg := &gorm.Config{Logger: newLogger}
 
 	var (
 		db  *gorm.DB
@@ -103,7 +94,7 @@ func ConnectDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		if err := os.MkdirAll(filepath.Dir(cfg.SQLitePath), 0o755); err != nil {
 			return nil, fmt.Errorf("create sqlite dir: %w", err)
 		}
-		db, err = gorm.Open(sqlite.Open(cfg.SQLitePath), &gorm.Config{Logger: newLogger})
+		db, err = gorm.Open(sqlite.Open(cfg.SQLitePath), gormCfg)
 	default:
 		dsn := fmt.Sprintf(
 			"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
@@ -114,7 +105,7 @@ func ConnectDB(cfg config.DatabaseConfig) (*gorm.DB, error) {
 			cfg.DBName,
 			cfg.SSLMode,
 		)
-		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: newLogger})
+		db, err = gorm.Open(postgres.Open(dsn), gormCfg)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

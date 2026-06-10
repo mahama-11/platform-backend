@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"go.opentelemetry.io/otel/trace"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
@@ -56,6 +57,61 @@ func TestRequirePermissionAndRequestContext(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 200 || w.Header().Get(platformconst.HeaderRequestID) == "" || w.Header().Get(platformconst.HeaderTraceID) == "" {
 		t.Fatalf("expected request context headers, got status=%d headers=%v body=%s", w.Code, w.Header(), w.Body.String())
+	}
+}
+
+func TestRequestContextUsesW3CTraceContextOverLegacyXTraceID(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	traceID, err := trace.TraceIDFromHex("4bf92f3577b34da6a3ce929d0e0e4736")
+	if err != nil {
+		t.Fatalf("TraceIDFromHex: %v", err)
+	}
+	spanID, err := trace.SpanIDFromHex("00f067aa0ba902b7")
+	if err != nil {
+		t.Fatalf("SpanIDFromHex: %v", err)
+	}
+	spanContext := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID, Remote: true})
+
+	r := gin.New()
+	r.Use(RequestContext())
+	r.GET("/ok", func(c *gin.Context) {
+		c.String(http.StatusOK, c.GetString(platformconst.CtxRequestID)+"|"+c.GetString(platformconst.CtxTraceID))
+	})
+	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	req.Header.Set(platformconst.HeaderRequestID, "client-req-1")
+	req.Header.Set(platformconst.HeaderTraceID, "legacy-x-trace-id")
+	req = req.WithContext(trace.ContextWithRemoteSpanContext(req.Context(), spanContext))
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	want := "client-req-1|" + traceID.String()
+	if strings.TrimSpace(w.Body.String()) != want {
+		t.Fatalf("request context = %q, want %q", strings.TrimSpace(w.Body.String()), want)
+	}
+	if got := w.Header().Get(platformconst.HeaderTraceID); got != traceID.String() {
+		t.Fatalf("response X-Trace-ID=%q, want OTel trace id %q", got, traceID.String())
+	}
+}
+
+func TestStartedInternalServiceReportsUnverifiedHeaderAtRequestStart(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/internal/v1/test", nil)
+	c.Request.Header.Set(platformconst.HeaderInternalService, "v-ecommerce-backend")
+	service, verified := startedInternalService(c)
+	if service != "v-ecommerce-backend" || !verified {
+		t.Fatalf("startedInternalService=%q,%v", service, verified)
+	}
+
+	c.Request = httptest.NewRequest(http.MethodGet, "/internal/v1/test", nil)
+	c.Request.Header.Set(platformconst.HeaderInternalServiceSecret, "secret")
+	service, verified = startedInternalService(c)
+	if service != platformconst.InternalServiceLegacySecret || !verified {
+		t.Fatalf("legacy startedInternalService=%q,%v", service, verified)
 	}
 }
 

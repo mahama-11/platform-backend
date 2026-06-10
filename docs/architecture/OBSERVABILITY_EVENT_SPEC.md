@@ -96,9 +96,11 @@ idempotency key raw value
 
 ## request_id / trace_id inheritance
 
-1. 入口 HTTP 请求：接受 `X-Request-ID` / `X-Trace-ID`，缺失时生成并回写响应头。
-2. Platform → Product 或 Product → Platform internal API：传递现有 request/trace header，不重新生成并覆盖。
-3. 诊断 API：先用 request_id 查日志，再从匹配日志反推 trace_id；不要把 raw log line 写入业务数据库。
+1. 入口 HTTP 请求：接受 `X-Request-ID`；缺失时生成并回写响应头，用于业务、客服和日志检索。
+2. 分布式追踪以 W3C `traceparent` 为准；Platform 的 OTel middleware 会继承 `traceparent`，并把继承/生成后的 OTel trace ID 写入日志、响应 `X-Trace-ID` 以及错误响应 body 的 `trace_id`。
+3. `X-Trace-ID` 仅作为兼容字段保留。没有 `traceparent` 时它不能创建完整 OTel trace；有 `traceparent` 时不应覆盖 OTel trace ID。
+4. Platform → Product 或 Product → Platform internal API：必须透传 `X-Request-ID` 和 `traceparent`；可同步透传 `X-Trace-ID` 兼容旧日志检索。
+5. 诊断 API：先用 request_id 查日志，再从匹配日志反推 trace_id；不要把 raw log line 写入业务数据库。
 
 ## Implementation entrypoints
 

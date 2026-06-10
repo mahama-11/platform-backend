@@ -44,8 +44,11 @@
   "code": 2001,
   "message": "Insufficient quota balance",
   "request_id": "req_xxx",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
   "timestamp": 1710000000000,
-  "error": "insufficient quota balance"
+  "error": "insufficient quota balance",
+  "error_code": "INSUFFICIENT_QUOTA",
+  "error_hint": "Check quota balance or release stale reservations before retrying."
 }
 ```
 
@@ -75,7 +78,14 @@
 - `X-Internal-Timestamp`
 - `X-Internal-Signature`
 - `X-Request-ID`
-- `X-Trace-ID`
+- `traceparent`
+- `X-Trace-ID`（兼容字段）
+
+Correlation semantics:
+
+- `X-Request-ID` is the stable business/customer-support correlation ID and should be preserved end-to-end.
+- `traceparent` is the authoritative W3C/OpenTelemetry distributed tracing context.
+- `X-Trace-ID` is retained for compatibility and response headers, but callers must not rely on it as the only cross-service tracing mechanism; when `traceparent` is present, Platform uses the OTel trace ID from `traceparent`.
 
 兼容旧方式：
 

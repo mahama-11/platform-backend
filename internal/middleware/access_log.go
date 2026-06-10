@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"strings"
 	"time"
 
 	"platform-service/pkg/logger"
@@ -10,9 +11,21 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func startedInternalService(c *gin.Context) (string, bool) {
+	service := strings.TrimSpace(c.GetHeader(platformconst.HeaderInternalService))
+	if service != "" {
+		return service, true
+	}
+	if strings.TrimSpace(c.GetHeader(platformconst.HeaderInternalServiceSecret)) != "" {
+		return platformconst.InternalServiceLegacySecret, true
+	}
+	return "", false
+}
+
 func AccessLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+		startedInternalServiceName, startedInternalServiceVerified := startedInternalService(c)
 		log := logger.With(
 			"request_id", c.GetString(platformconst.CtxRequestID),
 			"trace_id", c.GetString(platformconst.CtxTraceID),
@@ -20,7 +33,8 @@ func AccessLog() gin.HandlerFunc {
 			"path", c.Request.URL.Path,
 			"route", c.FullPath(),
 			"client_ip", c.ClientIP(),
-			"internal_service_name", c.GetString(platformconst.CtxInternalServiceName),
+			"internal_service_name", startedInternalServiceName,
+			"internal_service_name_verified", startedInternalServiceVerified,
 			"internal_auth_mode", c.GetString(platformconst.CtxInternalAuthMode),
 		)
 		log.Info("request.started")
