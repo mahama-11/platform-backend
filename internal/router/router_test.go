@@ -52,6 +52,10 @@ func TestNewRegistersCoreRoutes(t *testing.T) {
 	}
 	required := []string{
 		"GET /healthz",
+		"GET /docs/internal-access",
+		"GET /docs/error-codes",
+		"GET /api/v1/docs/internal-access",
+		"GET /api/v1/docs/error-codes",
 		"POST /api/v1/auth/register",
 		"POST /api/v1/auth/login",
 		"GET /api/v1/auth/me",

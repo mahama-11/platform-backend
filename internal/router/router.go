@@ -60,8 +60,10 @@ func New(
 	docHandler := docs.NewHandler()
 	r.GET("/docs", func(c *gin.Context) {
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.String(200, `<!doctype html><html><head><title>Platform Docs</title></head><body><h1>Platform Docs</h1><ul><li><a href="/api/v1/docs/internal-access">Internal Access Guide</a></li><li><a href="/api/v1/docs/error-codes">Error Codes</a></li></ul><p>Internal OpenAPI generation is available via the repository scripts, and these endpoints provide the current browser-readable docs entry.</p></body></html>`)
+		c.String(200, `<!doctype html><html><head><title>Platform Docs</title></head><body><h1>Platform Docs</h1><ul><li><a href="/docs/internal-access">Internal Access Guide</a></li><li><a href="/docs/error-codes">Error Codes</a></li><li><a href="/api/v1/docs/internal-access">API v1 Internal Access Guide</a></li><li><a href="/api/v1/docs/error-codes">API v1 Error Codes</a></li></ul><p>Internal OpenAPI generation is available via the repository scripts, and these endpoints provide the current browser-readable docs entry.</p></body></html>`)
 	})
+	r.GET("/docs/internal-access", docHandler.InternalAccessDoc)
+	r.GET("/docs/error-codes", docHandler.ErrorCodesDoc)
 
 	v1 := r.Group("/api/v1")
 	{
