@@ -11,42 +11,47 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func startedInternalService(c *gin.Context) (string, bool) {
+func startedInternalService(c *gin.Context) (name string, verified bool, source string) {
 	service := strings.TrimSpace(c.GetHeader(platformconst.HeaderInternalService))
 	if service != "" {
-		return service, true
+		return service, false, "header"
 	}
 	if strings.TrimSpace(c.GetHeader(platformconst.HeaderInternalServiceSecret)) != "" {
-		return platformconst.InternalServiceLegacySecret, true
+		return platformconst.InternalServiceLegacySecret, false, "legacy-secret-header"
 	}
-	return "", false
+	return "", false, ""
 }
 
 func AccessLog() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
-		startedInternalServiceName, startedInternalServiceVerified := startedInternalService(c)
-		log := logger.With(
+		startedInternalServiceName, startedInternalServiceVerified, startedInternalServiceSource := startedInternalService(c)
+		baseAttrs := []any{
 			"request_id", c.GetString(platformconst.CtxRequestID),
 			"trace_id", c.GetString(platformconst.CtxTraceID),
 			"method", c.Request.Method,
 			"path", c.Request.URL.Path,
 			"route", c.FullPath(),
 			"client_ip", c.ClientIP(),
+		}
+		logger.With(append(baseAttrs,
 			"internal_service_name", startedInternalServiceName,
 			"internal_service_name_verified", startedInternalServiceVerified,
+			"internal_service_name_source", startedInternalServiceSource,
 			"internal_auth_mode", c.GetString(platformconst.CtxInternalAuthMode),
-		)
-		log.Info("request.started")
+		)...).Info("request.started")
 		c.Next()
 
-		log = log.With(
+		finishedInternalServiceName := c.GetString(platformconst.CtxInternalServiceName)
+		log := logger.With(append(baseAttrs,
 			"status", c.Writer.Status(),
 			"latency_ms", time.Since(start).Milliseconds(),
 			"user_id", c.GetString(platformconst.CtxUserID),
 			"org_id", c.GetString(platformconst.CtxOrgID),
-			"internal_service_name", c.GetString(platformconst.CtxInternalServiceName),
-		)
+			"internal_service_name", finishedInternalServiceName,
+			"internal_service_name_verified", finishedInternalServiceName != "",
+			"internal_auth_mode", c.GetString(platformconst.CtxInternalAuthMode),
+		)...)
 		responseCode, responseErrorCode, responseErrorHint, responseErrorMessage := response.ResponseMeta(c)
 		if responseCode != 0 {
 			log = log.With("response_code", responseCode)

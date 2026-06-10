@@ -82,6 +82,26 @@ func TestAuditServiceRecordAndHelpers(t *testing.T) {
 	if err != nil || item.ID != "audit-new" {
 		t.Fatalf("GetLog: item=%+v err=%v", item, err)
 	}
+	diagnostics, err := service.GetRequestDiagnostics(DiagnosticsInput{RequestID: "req-new", TraceID: "trace-new", Limit: 5})
+	if err != nil {
+		t.Fatalf("GetRequestDiagnostics: %v", err)
+	}
+	if diagnostics.RequestID != "req-new" || diagnostics.TraceID != "trace-new" || diagnostics.LogSummary.TotalLines != 1 || !diagnostics.DiagnosticsEnabled {
+		t.Fatalf("unexpected diagnostics result: %+v", diagnostics)
+	}
+	if len(diagnostics.LogLines) != 1 || diagnostics.LogLines[0].Fields["action"] != "catalog.product.update" {
+		t.Fatalf("expected sanitized audit log line, got %+v", diagnostics.LogLines)
+	}
+	missingDiagnostics, err := service.GetRequestDiagnostics(DiagnosticsInput{RequestID: "req-missing", Limit: 5})
+	if err != nil {
+		t.Fatalf("GetRequestDiagnostics missing should return diagnostic payload, got %v", err)
+	}
+	if missingDiagnostics.LogSummary.TotalLines != 0 || len(missingDiagnostics.Findings) < 2 {
+		t.Fatalf("expected missing diagnostics finding, got %+v", missingDiagnostics)
+	}
+	if _, err := service.GetRequestDiagnostics(DiagnosticsInput{}); err != ErrMissingDiagnosticsRequestID {
+		t.Fatalf("expected ErrMissingDiagnosticsRequestID, got %v", err)
+	}
 	if _, err := service.QueryLogs(QueryInput{Offset: -1}); err != ErrInvalidPagination {
 		t.Fatalf("expected ErrInvalidPagination, got %v", err)
 	}

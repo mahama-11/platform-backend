@@ -86,3 +86,44 @@ func (h *Handler) GetLog(c *gin.Context) {
 	}
 	response.JSONSuccess(c, item)
 }
+
+// GetRequestDiagnostics godoc
+// @Summary Get sanitized request diagnostics
+// @Description Returns request-level diagnostics derived from platform_audit_logs so Platform Console can stop probing a missing route. Raw stdout logs and trace spans remain external until a log/trace backend is connected.
+// @Tags audit
+// @Produce json
+// @Param requestID path string true "Request ID"
+// @Param trace_id query string false "Optional trace ID"
+// @Param lookback query string false "Reserved lookback window for future log backend integration"
+// @Param limit query int false "Limit, default 50, max 200"
+// @Success 200 {object} response.SuccessResponse
+// @Failure 400 {object} response.ErrorResponse
+// @Failure 500 {object} response.ErrorResponse
+// @Router /api/v1/audit/diagnostics/requests/{requestID} [get]
+func (h *Handler) GetRequestDiagnostics(c *gin.Context) {
+	span := telemetry.StartGinSpan(c, "platform-service/audit-handler", "audit.diagnostics.request.get")
+	defer span.End()
+
+	var req DiagnosticsInput
+	if err := c.ShouldBindQuery(&req); err != nil {
+		span.RecordError(err)
+		response.JSONBindError(c, err, "invalid request diagnostics query")
+		return
+	}
+	req.RequestID = c.Param("requestID")
+	result, err := h.service.GetRequestDiagnostics(req)
+	if err != nil {
+		span.RecordError(err)
+		if errors.Is(err, ErrMissingDiagnosticsRequestID) {
+			response.WriteObservedSemanticError(c, err, response.CodeMissingParameter, "missing diagnostics request_id", "AUDIT_DIAGNOSTICS_REQUEST_ID_MISSING", "Pass the request_id path parameter copied from an API response or browser network entry.")
+			return
+		}
+		if errors.Is(err, ErrInvalidPagination) {
+			response.WriteObservedSemanticError(c, err, response.CodeInvalidParameter, "invalid request diagnostics pagination", "AUDIT_DIAGNOSTICS_PAGINATION_INVALID", "Use limit between 1 and 200.")
+			return
+		}
+		response.WriteObservedSemanticError(c, err, response.CodeInternalError, "failed to build request diagnostics", "AUDIT_DIAGNOSTICS_QUERY_FAILED", "Retry the query and inspect platform logs with request_id if the issue persists.")
+		return
+	}
+	response.JSONSuccess(c, result)
+}

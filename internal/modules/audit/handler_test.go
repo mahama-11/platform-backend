@@ -41,6 +41,10 @@ func TestAuditHandlerListAndGet(t *testing.T) {
 	if missingResp.Code == http.StatusOK {
 		t.Fatalf("expected missing audit log error")
 	}
+	diagnosticsResp := performAuditRequest(t, handler.GetRequestDiagnostics, http.MethodGet, "/audit/diagnostics/requests/req-handler-1?trace_id=trace-handler-1&limit=5", gin.Params{{Key: "requestID", Value: "req-handler-1"}})
+	if diagnosticsResp.Code != http.StatusOK || !containsBody(diagnosticsResp, "AUDIT_DIAGNOSTICS_AUDIT_FACTS") || !containsBody(diagnosticsResp, "req-handler-1") {
+		t.Fatalf("expected request diagnostics success, got %d: %s", diagnosticsResp.Code, diagnosticsResp.Body.String())
+	}
 	invalidList := performAuditRequest(t, handler.ListLogs, http.MethodGet, "/audit/logs?offset=-1", nil)
 	if invalidList.Code == http.StatusOK {
 		t.Fatalf("expected invalid pagination error")

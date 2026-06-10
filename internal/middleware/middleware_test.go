@@ -23,6 +23,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.opentelemetry.io/otel/trace"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -96,22 +97,50 @@ func TestRequestContextUsesW3CTraceContextOverLegacyXTraceID(t *testing.T) {
 	}
 }
 
+func TestRequestContextExtractsTraceparentHeaderAfterOtelMiddleware(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	const traceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+
+	r := gin.New()
+	r.Use(otelgin.Middleware("platform-service-test"), RequestContext())
+	r.GET("/ok", func(c *gin.Context) {
+		c.String(http.StatusOK, c.GetString(platformconst.CtxRequestID)+"|"+c.GetString(platformconst.CtxTraceID))
+	})
+	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	req.Header.Set(platformconst.HeaderRequestID, "client-req-2")
+	req.Header.Set(platformconst.HeaderTraceID, "legacy-x-trace-id")
+	req.Header.Set("traceparent", "00-"+traceID+"-00f067aa0ba902b7-01")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
+	}
+	want := "client-req-2|" + traceID
+	if strings.TrimSpace(w.Body.String()) != want {
+		t.Fatalf("request context = %q, want %q", strings.TrimSpace(w.Body.String()), want)
+	}
+	if got := w.Header().Get(platformconst.HeaderTraceID); got != traceID {
+		t.Fatalf("response X-Trace-ID=%q, want OTel trace id %q", got, traceID)
+	}
+}
+
 func TestStartedInternalServiceReportsUnverifiedHeaderAtRequestStart(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/internal/v1/test", nil)
 	c.Request.Header.Set(platformconst.HeaderInternalService, "v-ecommerce-backend")
-	service, verified := startedInternalService(c)
-	if service != "v-ecommerce-backend" || !verified {
-		t.Fatalf("startedInternalService=%q,%v", service, verified)
+	service, verified, source := startedInternalService(c)
+	if service != "v-ecommerce-backend" || verified || source != "header" {
+		t.Fatalf("startedInternalService=%q,%v,%q", service, verified, source)
 	}
 
 	c.Request = httptest.NewRequest(http.MethodGet, "/internal/v1/test", nil)
 	c.Request.Header.Set(platformconst.HeaderInternalServiceSecret, "secret")
-	service, verified = startedInternalService(c)
-	if service != platformconst.InternalServiceLegacySecret || !verified {
-		t.Fatalf("legacy startedInternalService=%q,%v", service, verified)
+	service, verified, source = startedInternalService(c)
+	if service != platformconst.InternalServiceLegacySecret || verified || source != "legacy-secret-header" {
+		t.Fatalf("legacy startedInternalService=%q,%v,%q", service, verified, source)
 	}
 }
 

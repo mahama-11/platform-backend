@@ -29,6 +29,7 @@ This document defines the current Platform observability shape and the intended 
 - Query API:
   - `GET /api/v1/audit/logs`
   - `GET /api/v1/audit/logs/:auditID`
+  - `GET /api/v1/audit/diagnostics/requests/:requestID` — sanitized request diagnostics derived from audit facts; raw stdout/trace search remains external until a log/trace backend is connected.
 - Access control: JWT + `platform.admin` permission.
 
 ### 3. Metrics

@@ -63,6 +63,7 @@ func TestNewRegistersCoreRoutes(t *testing.T) {
 		"GET /api/v1/template-ops/catalog",
 		"GET /api/v1/audit/logs",
 		"GET /api/v1/audit/logs/:auditID",
+		"GET /api/v1/audit/diagnostics/requests/:requestID",
 		"POST /internal/v1/runtime/jobs",
 		"POST /internal/v1/commercial/route/resolve",
 		"GET /internal/v1/wallet/summary",
