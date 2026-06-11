@@ -39,7 +39,7 @@ This document defines the current Platform observability shape and the intended 
 - Production collector: Prometheus / Grafana
 - Purpose: health, latency, error rates, business operation counters.
 
-### 4. Trace seeds
+### 4. OpenTelemetry traces
 
 The codebase already contains OpenTelemetry seeds:
 
@@ -48,11 +48,35 @@ The codebase already contains OpenTelemetry seeds:
 - `trace_id` fields in audit/usage/settlement paths
 - config block: `monitoring.tracing`
 
-Production tracing remains disabled until a trace backend is deployed.
+Cloud DEV currently runs OTel export through the shared observability stack:
+
+```text
+platform-backend -> enterprise-otel-collector:4317 -> enterprise-tempo -> enterprise-grafana
+```
+
+DEV configuration keeps `monitoring.tracing.enabled=true`, backend `tempo`, OTLP gRPC endpoint `enterprise-otel-collector:4317`, and `sample_rate=1.0` so cross-service propagation can be verified deterministically. Production enablement remains a separate approval boundary with conservative sampling and capacity review.
+
+## Correlation contract
+
+- `X-Request-ID` is the stable business/operator lookup key. It is accepted from callers, generated if missing, returned as a response header, and included in structured logs and audit facts.
+- W3C `traceparent` is the distributed-tracing source of truth. Product services must propagate it on Platform calls so Tempo can stitch the full request tree.
+- `X-Trace-ID` is a compatibility response/header field that reflects the active OTel trace ID. It must not override a valid `traceparent`.
+- Error, internal, and diagnostics responses should include `request_id`, `trace_id`, `error_code`, and `error_hint`. Ordinary success responses may stay lightweight.
+- To manually verify a DEV trace, send a request with both `X-Request-ID` and a valid `traceparent`, then query Tempo by the trace ID, for example:
+
+```bash
+curl -sS -H 'X-Request-ID: platform-dev-direct-<ts>' \
+  -H 'traceparent: 00-55555555555555555555555555555555-1111111111111111-01' \
+  http://127.0.0.1:8195/api/v1/docs/internal-access
+
+curl -sS http://127.0.0.1:3200/api/traces/55555555555555555555555555555555
+```
+
+When verifying Cloud DEV from outside the Cloud host, use an SSH local forward to the Cloud backend or run the probe on the Cloud host directly. A public gateway route may not prove the request hit the DEV backend container.
 
 ## Production target
 
-Recommended target topology:
+Recommended production target topology:
 
 ```text
 Platform backend stdout JSON logs -> log collector -> Loki/ELK/ClickHouse
@@ -76,7 +100,7 @@ Primary workflow:
 ## Trace backend enablement plan
 
 1. Deploy Tempo or Jaeger plus optional OTel Collector on the production Docker network.
-2. Update production config:
+2. Update production config after approval:
 
 ```yaml
 monitoring:
@@ -84,11 +108,13 @@ monitoring:
     enabled: true
     service_name: "platform-service"
     environment: "production"
-    jaeger_endpoint: "http://<collector-or-jaeger>:14268/api/traces"
-    sample_rate: 0.1
+    backend: "tempo"
+    otlp_endpoint: "enterprise-otel-collector:4317"
+    otlp_insecure: true
+    sample_rate: 0.05
 ```
 
-3. Start with conservative sampling (`0.1`), then raise sampling only for short incident windows.
+3. Start with conservative sampling (`0.05` or lower), then raise sampling only for short incident windows or selected high-risk internal/runtime paths.
 4. Add Grafana data source and dashboard links.
 5. Add a frontend environment variable for trace deep links only after the backend collector is confirmed healthy.
 
