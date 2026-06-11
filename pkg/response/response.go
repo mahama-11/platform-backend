@@ -114,6 +114,7 @@ type SuccessResponse struct {
 type ErrorResponse struct {
 	BaseResponse
 	Error     string       `json:"error,omitempty"`
+	TraceID   string       `json:"trace_id,omitempty"`
 	ErrorCode string       `json:"error_code,omitempty"`
 	ErrorHint string       `json:"error_hint,omitempty"`
 	Errors    []FieldError `json:"errors,omitempty"`
@@ -201,6 +202,10 @@ func (r *BaseResponse) SetRequestInfo(c *gin.Context) {
 	r.RequestID = c.GetString(platformconst.CtxRequestID)
 }
 
+func (r *ErrorResponse) SetTraceInfo(c *gin.Context) {
+	r.TraceID = c.GetString(platformconst.CtxTraceID)
+}
+
 func JSONSuccess(c *gin.Context, data any) {
 	resp := NewSuccessResponse(data)
 	resp.SetRequestInfo(c)
@@ -225,6 +230,7 @@ func JSONPaginated(c *gin.Context, data any, page, pageSize, total int) {
 func JSONError(c *gin.Context, code ResponseCode, message string) {
 	resp := NewErrorResponse(code, message)
 	resp.SetRequestInfo(c)
+	resp.SetTraceInfo(c)
 	attachResponseMeta(c, resp.Code, "", "", message)
 	c.JSON(GetHTTPStatusCode(code), resp)
 }
@@ -237,6 +243,7 @@ func WriteObservedError(c *gin.Context, err error, code ResponseCode, message st
 func JSONErrorSemantic(c *gin.Context, code ResponseCode, message, errorCode, errorHint string) {
 	resp := NewSemanticErrorResponse(code, message, errorCode, errorHint)
 	resp.SetRequestInfo(c)
+	resp.SetTraceInfo(c)
 	attachResponseMeta(c, resp.Code, errorCode, errorHint, message)
 	c.JSON(GetHTTPStatusCode(code), resp)
 }
@@ -249,6 +256,7 @@ func WriteObservedSemanticError(c *gin.Context, err error, code ResponseCode, me
 func JSONErrorWithFields(c *gin.Context, code ResponseCode, message string, fieldErrors []FieldError) {
 	resp := NewErrorResponseWithFields(code, message, fieldErrors)
 	resp.SetRequestInfo(c)
+	resp.SetTraceInfo(c)
 	attachResponseMeta(c, resp.Code, "", "", message)
 	c.JSON(GetHTTPStatusCode(code), resp)
 }
@@ -256,6 +264,7 @@ func JSONErrorWithFields(c *gin.Context, code ResponseCode, message string, fiel
 func JSONErrorWithStatus(c *gin.Context, code ResponseCode, message string, status int) {
 	resp := NewErrorResponse(code, message)
 	resp.SetRequestInfo(c)
+	resp.SetTraceInfo(c)
 	attachResponseMeta(c, resp.Code, "", "", message)
 	c.JSON(status, resp)
 }
@@ -263,6 +272,7 @@ func JSONErrorWithStatus(c *gin.Context, code ResponseCode, message string, stat
 func JSONErrorWithStatusSemantic(c *gin.Context, code ResponseCode, message, errorCode, errorHint string, status int) {
 	resp := NewSemanticErrorResponse(code, message, errorCode, errorHint)
 	resp.SetRequestInfo(c)
+	resp.SetTraceInfo(c)
 	attachResponseMeta(c, resp.Code, errorCode, errorHint, message)
 	c.JSON(status, resp)
 }

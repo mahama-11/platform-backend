@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"platform-service/internal/config"
@@ -44,4 +45,13 @@ func TestInitTracingEnabled(t *testing.T) {
 		t.Fatalf("expected tracing shutdown function")
 	}
 	_ = shutdown(context.Background())
+}
+
+func TestNewTraceExporterRejectsInvalidConfig(t *testing.T) {
+	if _, err := newTraceExporter(context.Background(), config.TracingConfig{Backend: "tempo"}); err == nil || !strings.Contains(err.Error(), "otlp_endpoint") {
+		t.Fatalf("expected missing OTLP endpoint error, got %v", err)
+	}
+	if _, err := newTraceExporter(context.Background(), config.TracingConfig{Backend: "unsupported"}); err == nil || !strings.Contains(err.Error(), "unsupported tracing backend") {
+		t.Fatalf("expected unsupported backend error, got %v", err)
+	}
 }

@@ -1,7 +1,11 @@
 FROM golang:1.25-alpine AS builder
 WORKDIR /src
-ARG GOPROXY=https://proxy.golang.org,direct
-ENV GOPROXY=${GOPROXY}
+# Cloud DEV builds run from China-hosted infrastructure; default to a reachable
+# Go module proxy while keeping build args overrideable for other networks.
+ARG GOPROXY=https://goproxy.cn,direct
+ARG GOSUMDB=sum.golang.google.cn
+ENV GOPROXY=${GOPROXY} \
+    GOSUMDB=${GOSUMDB}
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
@@ -13,6 +17,7 @@ RUN apk add --no-cache ca-certificates tzdata wget
 RUN addgroup -g 1000 -S appuser &&     adduser -u 1000 -S appuser -G appuser
 WORKDIR /app
 COPY --from=builder /out/platform-service ./platform-service
+COPY config.*.yaml ./
 RUN mkdir -p /app/data && chown -R appuser:appuser /app
 USER appuser
 ENV PLATFORM_PORT=8095

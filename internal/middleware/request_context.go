@@ -8,6 +8,7 @@ import (
 	"platform-service/pkg/utils"
 
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -20,6 +21,9 @@ func RequestContext() gin.HandlerFunc {
 		traceID := c.GetHeader(platformconst.HeaderTraceID)
 		if traceID == "" {
 			traceID = requestID
+		}
+		if spanCtx := trace.SpanContextFromContext(propagation.TraceContext{}.Extract(c.Request.Context(), propagation.HeaderCarrier(c.Request.Header))); spanCtx.IsValid() {
+			traceID = spanCtx.TraceID().String()
 		}
 		if spanCtx := trace.SpanFromContext(c.Request.Context()).SpanContext(); spanCtx.IsValid() {
 			traceID = spanCtx.TraceID().String()

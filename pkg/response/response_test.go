@@ -3,6 +3,7 @@ package response
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"platform-service/pkg/platformconst"
@@ -28,9 +29,13 @@ func TestResponseHelpers(t *testing.T) {
 	c, _ = gin.CreateTestContext(w)
 	c.Request = req
 	c.Set(platformconst.CtxRequestID, "req-1")
+	c.Set(platformconst.CtxTraceID, "trace-1")
 	JSONError(c, CodeForbidden, "forbidden")
 	if w.Code != GetHTTPStatusCode(CodeForbidden) {
 		t.Fatalf("JSONError status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"trace_id":"trace-1"`) {
+		t.Fatalf("expected error response trace_id, body=%s", w.Body.String())
 	}
 
 	w = httptest.NewRecorder()

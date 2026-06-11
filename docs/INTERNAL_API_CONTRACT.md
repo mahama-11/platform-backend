@@ -44,8 +44,11 @@
   "code": 2001,
   "message": "Insufficient quota balance",
   "request_id": "req_xxx",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
   "timestamp": 1710000000000,
-  "error": "insufficient quota balance"
+  "error": "insufficient quota balance",
+  "error_code": "INSUFFICIENT_QUOTA",
+  "error_hint": "Check quota balance or release stale reservations before retrying."
 }
 ```
 
@@ -75,7 +78,14 @@
 - `X-Internal-Timestamp`
 - `X-Internal-Signature`
 - `X-Request-ID`
-- `X-Trace-ID`
+- `traceparent`
+- `X-Trace-ID`（兼容字段）
+
+Correlation semantics:
+
+- `X-Request-ID` is the stable business/customer-support correlation ID and should be preserved end-to-end.
+- `traceparent` is the authoritative W3C/OpenTelemetry distributed tracing context.
+- `X-Trace-ID` is retained for compatibility and response headers, but callers must not rely on it as the only cross-service tracing mechanism; when `traceparent` is present, Platform uses the OTel trace ID from `traceparent`.
 
 兼容旧方式：
 
@@ -358,6 +368,11 @@ GET /internal/v1/wallet/accounts?billing_subject_type=organization&billing_subje
 - `GET /api/v1/audit/logs/:auditID` (`auditHandler.GetLog`)
   - 按 audit ID 返回单条 `platform_audit_logs` 详情。
   - 404 使用统一 error envelope，调用方应校验 audit ID 是否存在。
+- `GET /api/v1/audit/diagnostics/requests/{requestID}` (`auditHandler.GetRequestDiagnostics`)
+  - 按 request path param 聚合单次请求的 audit log、trace/correlation 与诊断 findings，供平台管理员排障。
+  - Query: `trace_id` 可辅助限定同一链路，`limit` 控制返回 log lines 数量并按服务端上限截断。
+  - Response envelope data 包含 `request_id`、`trace_id`、`diagnostics_enabled`、`log_summary`、`log_lines`、`findings`；即使 requestID 未命中，也返回带 findings 的诊断 payload。
+  - 认证/权限：JWTAuth + `platform.admin`，错误沿用统一 error envelope。
 
 ## 11. Swagger / OpenAPI 现状
 
@@ -370,7 +385,9 @@ GET /internal/v1/wallet/accounts?billing_subject_type=organization&billing_subje
 
 - `./scripts/gen-swagger-internal.sh`
 - `docs/openapi/README.md` 中维护当前覆盖范围
-- `/docs`、`/api/v1/docs/internal-access`、`/api/v1/docs/error-codes` 提供浏览器侧基础文档入口
+- `GET /docs` (`docsIndexHandler`) 提供根路径浏览器文档索引；response 为 HTML 文档 payload，服务端仍通过统一 request context/trace middleware 记录访问。
+- `GET /docs/internal-access` (`docHandler.InternalAccessDoc`)、`GET /docs/error-codes` (`docHandler.ErrorCodesDoc`) 提供根路径浏览器文档详情入口；response 为 HTML 文档 payload。
+- `GET /api/v1/docs/internal-access`、`GET /api/v1/docs/error-codes` 提供 API v1 浏览器侧基础文档入口，handler 与根路径文档入口一致。
 
 当前需要注意：
 

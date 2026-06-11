@@ -51,6 +51,7 @@ func TestPlatformSharedCapabilityContractRoutes(t *testing.T) {
 		"POST /api/v1/auth/register",
 		"POST /api/v1/auth/login",
 		"GET /api/v1/auth/me",
+		"GET /api/v1/audit/diagnostics/requests/:requestID",
 		"POST /api/v1/runtime/providers/:providerCode/callback",
 		"POST /internal/v1/runtime/providers",
 		"GET /internal/v1/runtime/providers",

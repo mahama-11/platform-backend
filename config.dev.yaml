@@ -187,6 +187,9 @@ database:
   max_open_conns: 25
   max_idle_conns: 5
   auto_migrate_enabled: true
+  log_level: "warn"
+  slow_threshold: "1s"
+  parameterized_logs: true
 
 redis:
   enabled: true
@@ -227,11 +230,14 @@ monitoring:
     push_interval: "30s"
     histogram_buckets: [0.1, 0.5, 1, 2, 5, 10]
   tracing:
-    enabled: false
+    enabled: true
+    backend: "tempo"
     service_name: "platform-service"
     service_version: "1.0.0"
     environment: "development"
     jaeger_endpoint: "http://localhost:14268/api/traces"
+    otlp_endpoint: "enterprise-otel-collector:4317"
+    otlp_insecure: true
     sample_rate: 1.0
     log_spans: false
 

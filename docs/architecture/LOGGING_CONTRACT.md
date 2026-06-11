@@ -7,6 +7,7 @@ This document defines the vendor-neutral business logging contract for Platform 
 - Services MUST emit structured JSON stdout for application logs in local, cloud-dev, and production-like runtime modes.
 - Log events SHOULD include `timestamp`, `level`, `service`, `message`, `request_id`, `trace_id`, and domain-safe context fields.
 - Passwords, bearer tokens, cookies, HMAC secrets, and raw customer payloads MUST NOT be logged.
+- Gorm SQL logging defaults to structured warn/slow-query output, parameterizes literal values, and truncates long SQL. Full info SQL logging is opt-in for local diagnostics only.
 
 ## Cloud-dev examples
 
