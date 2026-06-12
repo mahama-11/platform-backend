@@ -18,6 +18,9 @@ bootstrap:
       - code: "ecommerce"
         name: "Agent Ecommerce"
         owner_team: "agent-ecommerce"
+      - code: "novel_video"
+        name: "AI Video Studio"
+        owner_team: "video"
     commercial_entities:
       - code: "menu_default_entity"
         name: "Menu Default Entity"
@@ -52,6 +55,13 @@ bootstrap:
         billing_scope: "organization"
         settlement_mode: "credits"
         pricing_behavior: "standard"
+      - product_code: "novel_video"
+        code: "novel_video_generation"
+        name: "Novel Video Generation"
+        meter_unit: "video"
+        billing_scope: "organization"
+        settlement_mode: "quota"
+        pricing_behavior: "standard"
   runtime:
     product_endpoints:
       - product_code: "menu"
@@ -64,6 +74,11 @@ bootstrap:
         base_url: "http://v-ecommerce-backend-dev:8396"
         secret: "ecommerce-service-secret"
         metadata: '{"output_storage_category":"ecommerce-assets"}'
+      - product_code: "novel_video"
+        callback_kind: "generic_runtime"
+        base_url: ""
+        secret: ""
+        metadata: '{"output_storage_category":"video-assets"}'
     provider_bindings:
       - product_code: "menu"
         task_type: "image_generation"
@@ -155,6 +170,48 @@ bootstrap:
         priority: 80
         enabled: true
         metadata: '{"objective_scores":{"quality":82,"speed":60,"cost":60},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "novel_video"
+        task_type: "video_text_to_video"
+        provider_code: "pai_video"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":85,"speed":70,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "novel_video"
+        task_type: "video_image_to_video"
+        provider_code: "pai_video"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":85,"speed":70,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "novel_video"
+        task_type: "video_fusion"
+        provider_code: "pai_video"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":85,"speed":70,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "novel_video"
+        task_type: "video_transition"
+        provider_code: "pai_video"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":85,"speed":70,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "novel_video"
+        task_type: "video_mimic"
+        provider_code: "pai_video"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":85,"speed":70,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "novel_video"
+        task_type: "video_sound_effect"
+        provider_code: "pai_video"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":70,"speed":70,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
+      - product_code: "novel_video"
+        task_type: "video_lip_sync"
+        provider_code: "pai_video"
+        priority: 100
+        enabled: true
+        metadata: '{"objective_scores":{"quality":75,"speed":70,"cost":55},"fallback_on":["retryable_provider","provider_timeout","provider_unavailable"]}'
   storage:
     bindings:
       - product_code: "menu"
@@ -171,6 +228,12 @@ bootstrap:
         enabled: true
       - product_code: "ecommerce"
         category: "template-examples"
+        provider_code: "local"
+        local_base_dir: "/app/data/storage"
+        priority: 100
+        enabled: true
+      - product_code: "novel_video"
+        category: "video-assets"
         provider_code: "local"
         local_base_dir: "/app/data/storage"
         priority: 100
@@ -305,3 +368,11 @@ comfyui_bridge:
   callback_base_url: "http://127.0.0.1:8195"
   default_workflow_id: ""
   default_output_format: "png"
+
+pai_video:
+  enabled: true
+  base_url: "https://app-api.pixverseai.cn/openapi/v2"
+  api_key: ""
+  api_key_file: "/run/secrets/pai_video_api_key"
+  default_model: "v6"
+  request_timeout: 60s

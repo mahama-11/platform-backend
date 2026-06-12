@@ -69,6 +69,16 @@ type productHTTPCallbackClient struct {
 	client             *http.Client
 }
 
+type productNoopCallbackClient struct{}
+
+func (productNoopCallbackClient) UpdateJobRuntime(context.Context, string, ProductUpdateRuntimeInput) error {
+	return nil
+}
+
+func (productNoopCallbackClient) RecordJobResults(context.Context, string, ProductRecordResultsInput) error {
+	return nil
+}
+
 func newProductHTTPCallbackClient(baseURL, secret, errorLabel string, runtimePathBuilder, resultsPathBuilder func(string) string) ProductRuntimeCallbackClient {
 	return &productHTTPCallbackClient{
 		baseURL:            strings.TrimRight(baseURL, "/"),
@@ -134,6 +144,11 @@ func buildProductCallbackClient(endpoint *models.RuntimeProductEndpoint) Product
 			func(sourceID string) string { return fmt.Sprintf("/internal/v1/ecommerce/jobs/%s/runtime", sourceID) },
 			func(sourceID string) string { return fmt.Sprintf("/internal/v1/ecommerce/jobs/%s/results", sourceID) },
 		)
+	case "generic_runtime", "platform_runtime":
+		// Generic runtime consumers poll Platform as the source of truth instead of
+		// maintaining a product-side result read model. Treat callback delivery as a
+		// supported no-op so completed jobs do not get downgraded to callback_failed.
+		return productNoopCallbackClient{}
 	default:
 		return nil
 	}

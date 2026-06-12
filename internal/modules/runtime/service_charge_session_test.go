@@ -442,6 +442,77 @@ func TestRuntimeChargeSessionBoundaryAndHelperBranches(t *testing.T) {
 	}
 }
 
+func TestRuntimeBindChargeSessionToTerminalJobSettlesLateBindingWithCallerAnchors(t *testing.T) {
+	service, repo, _ := newRuntimeServiceForTest(t)
+	if err := repo.DB().AutoMigrate(&models.ResourceReservation{}, &models.QuotaLedger{}); err != nil {
+		t.Fatalf("migrate reservations: %v", err)
+	}
+	job := &models.RuntimeJob{
+		ID:             "rt-late-bind-completed",
+		ProductCode:    "novel_video",
+		TaskType:       "video_text_to_video",
+		Status:         "completed",
+		Stage:          "completed",
+		SourceType:     "novel_video_job",
+		SourceID:       "video-late-bind",
+		OrganizationID: "org-late-bind",
+		UserID:         "user-late-bind",
+		ProviderCode:   "pai_video",
+		ProviderJobID:  "pai-late-bind",
+	}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	session, err := service.CreateChargeSession(CreateChargeSessionInput{SourceType: job.SourceType, SourceID: job.SourceID, ProductCode: job.ProductCode, OrganizationID: job.OrganizationID, UserID: job.UserID, BillingSubjectType: "organization", BillingSubjectID: job.OrganizationID, BillableItemCode: "novel_video_generation", ResourceType: "quota", EstimatedUnits: 5, ReservationKey: "late-bind-key"})
+	if err != nil {
+		t.Fatalf("CreateChargeSession: %v", err)
+	}
+	if err := repo.DB().Create(&models.ResourceReservation{ID: "reservation-late-bind", BillingSubjectType: "organization", BillingSubjectID: job.OrganizationID, BillableItemCode: "novel_video_generation", ResourceType: "quota", Units: 5, Status: "reserved", ReferenceID: session.ID}).Error; err != nil {
+		t.Fatalf("seed reservation: %v", err)
+	}
+	reserved, err := service.UpdateChargeSession(session.ID, UpdateChargeSessionInput{Status: "reserved", ReservationID: "reservation-late-bind"})
+	if err != nil {
+		t.Fatalf("reserve charge session: %v", err)
+	}
+	finalUnits := int64(2)
+	boundJob, boundSession, err := service.BindChargeSessionToRuntimeJobWithChargeUpdate(reserved.ID, job.ID, UpdateChargeSessionInput{
+		FinalUnits:     &finalUnits,
+		FinalizationID: "custom-finalization",
+		EventID:        "custom-event",
+		SettlementID:   "custom-settlement",
+		Metadata:       `{"gateway_version":"v2"}`,
+	})
+	if err != nil {
+		t.Fatalf("BindChargeSessionToRuntimeJobWithChargeUpdate: %v", err)
+	}
+	if boundJob.ChargeSessionID != reserved.ID {
+		t.Fatalf("expected job binding, got %+v", boundJob)
+	}
+	if boundSession.Status != "settled" || boundSession.FinalUnits != 2 || boundSession.FinalizationID != "custom-finalization" || boundSession.EventID != "custom-event" || boundSession.SettlementID != "custom-settlement" {
+		t.Fatalf("expected late bind to settle with caller anchors, got %+v", boundSession)
+	}
+	var reservation models.ResourceReservation
+	if err := repo.DB().First(&reservation, "id = ?", "reservation-late-bind").Error; err != nil {
+		t.Fatalf("reload reservation: %v", err)
+	}
+	if reservation.Status != "committed" || reservation.FinalizationID == nil || *reservation.FinalizationID != "custom-finalization" {
+		t.Fatalf("expected reservation committed with custom finalization, got %+v", reservation)
+	}
+	var consumeCount int64
+	if err := repo.DB().Model(&models.QuotaLedger{}).Where("reference_id = ? AND units = ?", session.ID, int64(2)).Count(&consumeCount).Error; err != nil {
+		t.Fatalf("count quota consume ledger: %v", err)
+	}
+	if consumeCount != 1 {
+		t.Fatalf("expected one quota consume ledger with final units, got %d", consumeCount)
+	}
+	if _, err := service.GetChargeSessionByReservationKey("late-bind-key"); err != nil {
+		t.Fatalf("GetChargeSessionByReservationKey: %v", err)
+	}
+	if !hasChargeSessionUpdateFields(UpdateChargeSessionInput{EventID: "event"}) || hasChargeSessionUpdateFields(UpdateChargeSessionInput{}) {
+		t.Fatalf("unexpected hasChargeSessionUpdateFields result")
+	}
+}
+
 func TestRuntimeChargeSessionListClampAndTerminalBindingBranches(t *testing.T) {
 	service, repo, _ := newRuntimeServiceForTest(t)
 	job := &models.RuntimeJob{ID: "rt-terminal-branches", ProductCode: "ecommerce", TaskType: "image_generation", OrganizationID: "org-terminal", UserID: "user-terminal", SourceType: "ecommerce_job", SourceID: "source-terminal", Status: "processing", ProviderCode: "provider-a", ProviderJobID: "provider-job-a"}

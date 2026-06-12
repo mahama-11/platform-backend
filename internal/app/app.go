@@ -17,6 +17,7 @@ import (
 	incentive "platform-service/internal/modules/incentive"
 	metering "platform-service/internal/modules/metering"
 	organization "platform-service/internal/modules/organization"
+	productbilling "platform-service/internal/modules/productbilling"
 	runtime "platform-service/internal/modules/runtime"
 	templateops "platform-service/internal/modules/templateops"
 	wallet "platform-service/internal/modules/wallet"
@@ -83,9 +84,10 @@ func New(configFile string) (*App, error) {
 	incentiveService := incentive.NewService(financeRepo)
 	meteringService := metering.NewService(commercialRepo, financeRepo, walletService)
 	runtimeService := runtime.NewService(runtimeRepo, cfg.Runtime, cfg.Security, cfg.ComfyUIBridge)
+	productBillingService := productbilling.NewService(commercialRepo, controlService, meteringService, runtimeService, walletService)
 	assetStorageService := assetstorage.NewService(runtimeRepo)
 	templateOpsService := templateops.NewService(*cfg, db)
-	runtimeRegistry := runtime.NewProviderRegistry(cfg.Volcengine, cfg.ComfyUIBridge, cfg.GeminiVisual, cfg.GeminiImage, cfg.Minimax, cfg.MinimaxImage, cfg.KimiCoding)
+	runtimeRegistry := runtime.NewProviderRegistry(cfg.Volcengine, cfg.ComfyUIBridge, cfg.GeminiVisual, cfg.GeminiImage, cfg.Minimax, cfg.MinimaxImage, cfg.KimiCoding, cfg.PaiVideo)
 	runtimeService.UseRuntime(nil, runtimeRegistry)
 	runtimeService.UseAssetStorage(assetStorageService)
 	var runtimeQueue *runtime.AsynqRuntime
@@ -130,6 +132,7 @@ func New(configFile string) (*App, error) {
 		incentive.NewHandler(incentiveService, auditService),
 		metering.NewHandler(meteringService, auditService),
 		runtime.NewHandler(runtimeService, auditService),
+		productbilling.NewHandler(productBillingService),
 		templateops.NewHandler(templateOpsService),
 		audit.NewHandler(auditService),
 		identityService,

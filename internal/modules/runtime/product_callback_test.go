@@ -62,6 +62,22 @@ func TestBuildProductCallbackClientMenuAndEcommerce(t *testing.T) {
 	}
 }
 
+func TestBuildProductCallbackClientGenericRuntimeIsNoop(t *testing.T) {
+	client := buildProductCallbackClient(&models.RuntimeProductEndpoint{
+		ProductCode:  "novel_video",
+		CallbackKind: "generic_runtime",
+	})
+	if client == nil {
+		t.Fatalf("expected generic runtime callback client")
+	}
+	if err := client.UpdateJobRuntime(context.Background(), "job1", ProductUpdateRuntimeInput{Status: "processing"}); err != nil {
+		t.Fatalf("generic runtime update should be no-op: %v", err)
+	}
+	if err := client.RecordJobResults(context.Background(), "job1", ProductRecordResultsInput{Status: "completed"}); err != nil {
+		t.Fatalf("generic runtime results should be no-op: %v", err)
+	}
+}
+
 func TestProductHTTPCallbackClientReturnsErrorOnHTTPFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "boom", http.StatusBadGateway)

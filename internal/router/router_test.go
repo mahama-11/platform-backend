@@ -14,6 +14,7 @@ import (
 	incentive "platform-service/internal/modules/incentive"
 	metering "platform-service/internal/modules/metering"
 	organization "platform-service/internal/modules/organization"
+	productbilling "platform-service/internal/modules/productbilling"
 	runtime "platform-service/internal/modules/runtime"
 	templateops "platform-service/internal/modules/templateops"
 	wallet "platform-service/internal/modules/wallet"
@@ -39,6 +40,7 @@ func TestNewRegistersCoreRoutes(t *testing.T) {
 		incentive.NewHandler(nil, nil),
 		metering.NewHandler(nil, nil),
 		runtime.NewHandler(nil, nil),
+		productbilling.NewHandler(nil),
 		templateops.NewHandler(nil),
 		audit.NewHandler(nil),
 		nil,

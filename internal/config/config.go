@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -27,6 +28,7 @@ type Config struct {
 	Minimax       MinimaxConfig                `mapstructure:"minimax"`
 	MinimaxImage  MinimaxImageConfig           `mapstructure:"minimax_image"`
 	KimiCoding    KimiCodingConfig             `mapstructure:"kimi_coding"`
+	PaiVideo      PaiVideoConfig               `mapstructure:"pai_video"`
 	Security      SecurityConfig               `mapstructure:"security"`
 	OAuth         OAuthConfig                  `mapstructure:"oauth"`
 	Monitoring    MonitoringConfig             `mapstructure:"monitoring"`
@@ -230,6 +232,15 @@ type KimiCodingConfig struct {
 	Temperature    float64       `mapstructure:"temperature"`
 }
 
+type PaiVideoConfig struct {
+	Enabled        bool          `mapstructure:"enabled"`
+	BaseURL        string        `mapstructure:"base_url"`
+	APIKey         string        `mapstructure:"api_key"`
+	APIKeyFile     string        `mapstructure:"api_key_file"`
+	DefaultModel   string        `mapstructure:"default_model"`
+	RequestTimeout time.Duration `mapstructure:"request_timeout"`
+}
+
 type TasksConfig struct {
 	Enabled        bool          `mapstructure:"enabled"`
 	ExpireInterval time.Duration `mapstructure:"expire_interval"`
@@ -336,6 +347,7 @@ func Load(configFile string) (*Config, error) {
 	_ = v.BindEnv("gemini_visual.api_key")
 	_ = v.BindEnv("gemini_image.api_key")
 	_ = v.BindEnv("minimax_image.api_key")
+	_ = v.BindEnv("pai_video.api_key")
 	setDefaults(v)
 
 	if err := v.ReadInConfig(); err != nil {
@@ -348,10 +360,35 @@ func Load(configFile string) (*Config, error) {
 	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, fmt.Errorf("unmarshal config: %w", err)
 	}
+	if err := resolvePaiVideoSecret(&cfg); err != nil {
+		return nil, err
+	}
 	if err := validateSecurityConfig(cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func resolvePaiVideoSecret(cfg *Config) error {
+	if cfg == nil {
+		return nil
+	}
+	if strings.TrimSpace(cfg.PaiVideo.APIKey) == "" {
+		if value := strings.TrimSpace(os.Getenv("PLATFORM_PAI_VIDEO_API_KEY")); value != "" {
+			cfg.PaiVideo.APIKey = value
+		}
+	}
+	if strings.TrimSpace(cfg.PaiVideo.APIKey) == "" && strings.TrimSpace(cfg.PaiVideo.APIKeyFile) != "" {
+		raw, err := os.ReadFile(cfg.PaiVideo.APIKeyFile)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("read pai_video.api_key_file: %w", err)
+		}
+		cfg.PaiVideo.APIKey = strings.TrimSpace(string(raw))
+	}
+	return nil
 }
 
 // insecureDefaultSecrets 列出不可用于非 debug 模式的已知默认密钥值。
@@ -454,6 +491,12 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("kimi_coding.request_timeout", "90s")
 	v.SetDefault("kimi_coding.max_tokens", 4096)
 	v.SetDefault("kimi_coding.temperature", 0.2)
+	v.SetDefault("pai_video.enabled", false)
+	v.SetDefault("pai_video.base_url", "")
+	v.SetDefault("pai_video.api_key", "")
+	v.SetDefault("pai_video.api_key_file", "")
+	v.SetDefault("pai_video.default_model", "v6")
+	v.SetDefault("pai_video.request_timeout", "60s")
 	v.SetDefault("tasks.enabled", true)
 	v.SetDefault("tasks.expire_interval", "1h")
 	v.SetDefault("tasks.cycle_interval", "1h")

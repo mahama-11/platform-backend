@@ -14,6 +14,7 @@ import (
 	incentive "platform-service/internal/modules/incentive"
 	metering "platform-service/internal/modules/metering"
 	organization "platform-service/internal/modules/organization"
+	productbilling "platform-service/internal/modules/productbilling"
 	runtime "platform-service/internal/modules/runtime"
 	templateops "platform-service/internal/modules/templateops"
 	wallet "platform-service/internal/modules/wallet"
@@ -39,6 +40,7 @@ func TestPlatformSharedCapabilityContractRoutes(t *testing.T) {
 		incentive.NewHandler(nil, nil),
 		metering.NewHandler(nil, nil),
 		runtime.NewHandler(nil, nil),
+		productbilling.NewHandler(nil),
 		templateops.NewHandler(nil),
 		audit.NewHandler(nil),
 		nil,
@@ -80,6 +82,13 @@ func TestPlatformSharedCapabilityContractRoutes(t *testing.T) {
 		"POST /internal/v1/metering/events",
 		"POST /internal/v1/metering/finalizations",
 		"GET /internal/v1/metering/settlements",
+		"GET /internal/v2/product-billing/commercial-view",
+		"POST /internal/v2/product-billing/package-activations",
+		"POST /internal/v2/product-billing/actions/begin",
+		"POST /internal/v2/product-billing/actions/:actionID/bind-runtime",
+		"POST /internal/v2/product-billing/actions/:actionID/complete",
+		"POST /internal/v2/product-billing/actions/:actionID/release",
+		"POST /internal/v2/product-billing/actions/:actionID/reconcile",
 	}
 	for _, key := range required {
 		if !paths[key] {

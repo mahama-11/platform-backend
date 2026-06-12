@@ -12,10 +12,10 @@
 
 本文档是总览文档，细节设计分别参考已有专题文档：
 
-- [商业化边界](file:///Users/bytedance/Documents/project/go/v/v-platform-backend/docs/architecture/COMMERCIALIZATION_BOUNDARY.md)
-- [商品模型设计](file:///Users/bytedance/Documents/project/go/v/v-platform-backend/docs/architecture/COMMERCIAL_CATALOG_MODEL.md)
-- [商业主体与商户路由设计](file:///Users/bytedance/Documents/project/go/v/v-platform-backend/docs/architecture/COMMERCIAL_ROUTING_MODEL.md)
-- [计量事件与用量真相源设计](file:///Users/bytedance/Documents/project/go/v/v-platform-backend/docs/architecture/METERING_AND_USAGE_SSOT.md)
+- [商业化边界](COMMERCIALIZATION_BOUNDARY.md)
+- [商品模型设计](COMMERCIAL_CATALOG_MODEL.md)
+- [商业主体与商户路由设计](COMMERCIAL_ROUTING_MODEL.md)
+- [计量事件与用量真相源设计](METERING_AND_USAGE_SSOT.md)
 
 ## 2. 总体判断
 

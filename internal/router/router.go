@@ -14,6 +14,7 @@ import (
 	incentive "platform-service/internal/modules/incentive"
 	metering "platform-service/internal/modules/metering"
 	organization "platform-service/internal/modules/organization"
+	productbilling "platform-service/internal/modules/productbilling"
 	runtime "platform-service/internal/modules/runtime"
 	templateops "platform-service/internal/modules/templateops"
 	wallet "platform-service/internal/modules/wallet"
@@ -36,6 +37,7 @@ func New(
 	incentiveHandler *incentive.Handler,
 	meteringHandler *metering.Handler,
 	runtimeHandler *runtime.Handler,
+	productBillingHandler *productbilling.Handler,
 	templateOpsHandler *templateops.Handler,
 	auditHandler *audit.Handler,
 	identityService *identity.Service,
@@ -314,6 +316,10 @@ func New(
 		}
 	}
 
+	// /internal/v1 exposes low-level commercial primitives kept for compatibility.
+	// Product backends should migrate to /internal/v2/product-billing, which wraps
+	// catalog view, package activation, begin/bind-runtime/complete/release, and
+	// repair/reconcile semantics. v1 primitive product integrations are expected to sunset per-product after v2 smoke passes.
 	internal := r.Group("/internal/v1")
 	internal.Use(middleware.RequireInternalService(cfg.Security.InternalServiceSecret))
 	{
@@ -411,6 +417,21 @@ func New(
 		internal.GET("/incentives/channel-settlement-items", incentiveHandler.ListChannelSettlementItems)
 		internal.POST("/incentives/channel-events/charges", incentiveHandler.RecordChannelCharge)
 		internal.POST("/incentives/channel-events/refunds", incentiveHandler.RecordChannelRefund)
+	}
+
+	internalV2 := r.Group("/internal/v2")
+	internalV2.Use(middleware.RequireInternalService(cfg.Security.InternalServiceSecret))
+	{
+		productBilling := internalV2.Group("/product-billing")
+		{
+			productBilling.GET("/commercial-view", productBillingHandler.CommercialView)
+			productBilling.POST("/package-activations", productBillingHandler.ActivatePackage)
+			productBilling.POST("/actions/begin", productBillingHandler.BeginAction)
+			productBilling.POST("/actions/:actionID/bind-runtime", productBillingHandler.BindRuntime)
+			productBilling.POST("/actions/:actionID/complete", productBillingHandler.CompleteAction)
+			productBilling.POST("/actions/:actionID/release", productBillingHandler.ReleaseAction)
+			productBilling.POST("/actions/:actionID/reconcile", productBillingHandler.ReconcileAction)
+		}
 	}
 	return r
 }

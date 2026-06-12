@@ -106,6 +106,81 @@ func (s *Service) GetChargeSession(id string) (*models.ChargeSession, error) {
 	return s.repo.FindChargeSessionByID(id)
 }
 
+func (s *Service) GetChargeSessionByReservationKey(reservationKey string) (*models.ChargeSession, error) {
+	return s.repo.FindChargeSessionByReservationKey(reservationKey)
+}
+
+// BindChargeSessionToRuntimeJob is the product-billing v2 seam for attaching an
+// already reserved billing action to a runtime job. It is idempotent for the same
+// binding and rejects cross-product/source/org mismatches before provider cost can
+// be settled against the wrong action.
+func (s *Service) BindChargeSessionToRuntimeJob(chargeSessionID, runtimeJobID string) (*models.RuntimeJob, *models.ChargeSession, error) {
+	return s.BindChargeSessionToRuntimeJobWithChargeUpdate(chargeSessionID, runtimeJobID, UpdateChargeSessionInput{})
+}
+
+// BindChargeSessionToRuntimeJobWithChargeUpdate binds a charge session to a
+// runtime job after first applying caller-supplied finalization hints such as
+// final units and idempotency anchors. If the runtime job is already terminal,
+// the terminal charge binding is executed in the same transaction so a product
+// billing action cannot remain permanently reserved after a late bind.
+func (s *Service) BindChargeSessionToRuntimeJobWithChargeUpdate(chargeSessionID, runtimeJobID string, chargeUpdate UpdateChargeSessionInput) (*models.RuntimeJob, *models.ChargeSession, error) {
+	var boundJob *models.RuntimeJob
+	var boundSession *models.ChargeSession
+	err := s.repo.DB().Transaction(func(tx *gorm.DB) error {
+		var job models.RuntimeJob
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", strings.TrimSpace(runtimeJobID)).First(&job).Error; err != nil {
+			return err
+		}
+		var session models.ChargeSession
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", strings.TrimSpace(chargeSessionID)).First(&session).Error; err != nil {
+			return err
+		}
+		if err := validateRuntimeChargeSessionBoundary(&job, &session); err != nil {
+			return err
+		}
+		if strings.TrimSpace(job.ChargeSessionID) != "" && job.ChargeSessionID != session.ID {
+			return fmt.Errorf("runtime job already bound to another charge session")
+		}
+		if !isTerminalChargeSessionStatus(session.Status) && hasChargeSessionUpdateFields(chargeUpdate) {
+			if err := transitionChargeSessionTx(tx, &session, chargeUpdate); err != nil {
+				return err
+			}
+		}
+		if strings.TrimSpace(job.ChargeSessionID) != session.ID {
+			job.ChargeSessionID = session.ID
+			if err := tx.Save(&job).Error; err != nil {
+				return err
+			}
+		}
+		if isTerminalRuntimeJobStatus(job.Status) {
+			if err := s.bindRuntimeTerminalChargeSessionTx(tx, &job, job.Status); err != nil {
+				return err
+			}
+			if err := tx.Where("id = ?", session.ID).First(&session).Error; err != nil {
+				return err
+			}
+		}
+		boundJob = &job
+		boundSession = &session
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return boundJob, boundSession, nil
+}
+
+func hasChargeSessionUpdateFields(input UpdateChargeSessionInput) bool {
+	return strings.TrimSpace(input.Status) != "" ||
+		strings.TrimSpace(input.ReservationID) != "" ||
+		strings.TrimSpace(input.FinalizationID) != "" ||
+		strings.TrimSpace(input.EventID) != "" ||
+		strings.TrimSpace(input.SettlementID) != "" ||
+		input.FinalUnits != nil ||
+		strings.TrimSpace(input.RouteSnapshot) != "" ||
+		strings.TrimSpace(input.Metadata) != ""
+}
+
 func (s *Service) saveRuntimeJobWithTerminalChargeBinding(job *models.RuntimeJob, terminalStatus string) error {
 	return s.repo.DB().Transaction(func(tx *gorm.DB) error {
 		if err := tx.Save(job).Error; err != nil {
@@ -147,6 +222,7 @@ func (s *Service) bindRuntimeTerminalChargeSessionTx(tx *gorm.DB, job *models.Ru
 			Status:         platformconst.SettlementStatusSettled,
 			FinalUnits:     &units,
 			FinalizationID: defaultString(session.FinalizationID, "runtime-finalization-"+job.ID),
+			EventID:        defaultString(session.EventID, "runtime-event-"+job.ID),
 			SettlementID:   defaultString(session.SettlementID, "runtime-settlement-"+job.ID),
 			Metadata:       mergeRuntimeChargeMetadata(session.Metadata, job, terminalStatus),
 		})
@@ -431,7 +507,7 @@ func (s *Service) UpdateChargeSession(id string, input UpdateChargeSessionInput)
 
 // ChargeSession 合法状态转移白名单
 var validChargeSessionTransitions = map[string][]string{
-	platformconst.StatusCreated:             {platformconst.ReservationStatusReserved, platformconst.StatusCanceled, platformconst.StatusFailed},
+	platformconst.StatusCreated:             {platformconst.ReservationStatusReserved, platformconst.ReservationStatusReleased, platformconst.StatusCanceled, platformconst.StatusFailed},
 	platformconst.ReservationStatusReserved: {platformconst.SettlementStatusSettled, platformconst.ReservationStatusReleased, platformconst.StatusFailed},
 	platformconst.ReservationStatusReleased: {},
 	platformconst.SettlementStatusSettled:   {},

@@ -14,7 +14,8 @@
 ## 2. 路径分层
 
 - 公共管理/控制台接口：`/api/v1/*`
-- 内部服务接口：`/internal/v1/*`
+- 内部服务低层兼容接口：`/internal/v1/*`
+- 产品商业化标准接口：`/internal/v2/product-billing/*`
 
 `/internal/v1/*` 的职责：
 
@@ -22,6 +23,39 @@
 - 触发计量、结算、资源预占、路由决策
 - 查询结算、折扣、钱包、奖励、返佣结果
 - 在出现补偿场景时触发 reverse
+
+迁移约束：`/internal/v1` 中与 catalog / wallet / quota / reservation / charge session / metering / settlement 相关的低层商业化接口继续保留给 Platform 内部模块和存量产品兼容，但普通产品后端应迁移到 `/internal/v2/product-billing/*`。新产品接入不得再复制低层商业化编排；旧产品在通过 v2 consumer smoke 后分批下线 v1 直连路径。
+
+`/internal/v2/product-billing/*` 的职责：
+
+- `GET /internal/v2/product-billing/commercial-view`（handler: `productBillingHandler.CommercialView`）
+  - Query request: `product_code` required; `billing_subject_type` defaults to `organization`; `billing_subject_id` optional for quota/wallet summary.
+  - Response envelope data: `CommercialView` with `product`, `skus`, `packages`, `billable_items`, `rate_cards`, `quota_balances`, optional `wallet`, `readiness.catalog_complete/reasons`, and `deprecated_v1_notice`.
+  - Error envelope: `PRODUCT_BILLING_VIEW_FAILED` when catalog or scoped billing subject lookup fails.
+- `POST /internal/v2/product-billing/package-activations`（handler: `productBillingHandler.ActivatePackage`）
+  - JSON body request: `product_code`, `package_code`, `billing_subject_type`, `billing_subject_id`, stable `reference_id`, optional `activation_reason` and `metadata`.
+  - Response envelope data: package activation result containing applied quota/capability grants and `idempotent`; success status is HTTP `201`.
+  - Error envelope: `PRODUCT_BILLING_PACKAGE_ACTIVATION_FAILED`; callers must keep `reference_id` stable for retry/idempotency.
+- `POST /internal/v2/product-billing/actions/begin`（handler: `productBillingHandler.BeginAction`）
+  - JSON body request: `product_code`, `organization_id`, `source_type`, `source_id`, `billable_item_code`, stable `idempotency_key`; optional `user_id`, `source_action`, `task_type`, `billing_subject_type`, `billing_subject_id`, `resource_type`, `estimated_units`, `unit`, `route_snapshot`, `metadata`.
+  - Response envelope data: `ProductBillingAction` with `action_id`, scoped product/org/source fields, `status`, `charge_session_id`, optional `reservation_id`, `repair`, and `idempotent`; success status is HTTP `201`.
+  - Error envelope: `PRODUCT_BILLING_ACTION_BEGIN_FAILED`; invalid request maps to invalid-parameter code.
+- `POST /internal/v2/product-billing/actions/{actionID}/bind-runtime`（handler: `productBillingHandler.BindRuntime`）
+  - Path param: `actionID`; JSON body request: `runtime_job_id` required.
+  - Response envelope data: updated `ProductBillingAction` with `runtime_job_id`; runtime job and action must share product, organization, and source boundaries.
+  - Error envelope: `PRODUCT_BILLING_ACTION_BIND_RUNTIME_FAILED`; missing action maps to not-found code.
+- `POST /internal/v2/product-billing/actions/{actionID}/complete`（handler: `productBillingHandler.CompleteAction`）
+  - Path param: `actionID`; JSON body request: optional `runtime_job_id`, `final_units`, `finalization_id`, `event_id`, `settlement_id`, `output_manifest`, `stage_message`, `dimensions`, `occurred_at`, `metadata`.
+  - Response envelope data: terminal/settled `ProductBillingAction` with finalization, metering event, settlement, and repair summary fields.
+  - Error envelope: `PRODUCT_BILLING_ACTION_COMPLETE_FAILED`; complete requires a reserved action and is idempotent around finalization/event identifiers.
+- `POST /internal/v2/product-billing/actions/{actionID}/release`（handler: `productBillingHandler.ReleaseAction`）
+  - Path param: `actionID`; JSON body request: optional `reason` and `metadata`.
+  - Response envelope data: released or terminal-idempotent `ProductBillingAction`; reserved/created actions release quota and close the charge session.
+  - Error envelope: `PRODUCT_BILLING_ACTION_RELEASE_FAILED`; settled actions are terminal and idempotently returned.
+- `POST /internal/v2/product-billing/actions/{actionID}/reconcile`（handler: `productBillingHandler.ReconcileAction`）
+  - Path param: `actionID`; JSON body request: optional `repair_mode` and `reason`.
+  - Response envelope data: `ProductBillingAction` with `repair.required`, `repair.state`, and `repair.reasons` indicating whether complete/release repair is needed.
+  - Error envelope: `PRODUCT_BILLING_ACTION_RECONCILE_FAILED`; use reconcile before manual repair of pending reserved actions.
 
 ## 3. 统一响应结构
 

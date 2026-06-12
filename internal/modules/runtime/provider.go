@@ -166,6 +166,17 @@ func isRetryableProviderError(err error) bool {
 	return true
 }
 
+func providerErrorCode(err error) string {
+	if err == nil {
+		return ""
+	}
+	type coded interface{ Code() string }
+	if value, ok := err.(coded); ok {
+		return value.Code()
+	}
+	return ""
+}
+
 type GenerationProvider interface {
 	Name() string
 	Submit(ctx context.Context, req ProviderJobRequest) (*ProviderSubmission, error)
@@ -178,13 +189,16 @@ type ProviderRegistry struct {
 	providers map[string]GenerationProvider
 }
 
-func NewProviderRegistry(volcengineCfg config.VolcengineConfig, comfyCfg config.ComfyUIBridgeConfig, geminiCfg config.OpenAICompatibleVisionConfig, geminiImageCfg config.OpenAICompatibleVisionConfig, minimaxCfg config.MinimaxConfig, minimaxImageCfg config.MinimaxImageConfig, kimiCfg config.KimiCodingConfig) *ProviderRegistry {
+func NewProviderRegistry(volcengineCfg config.VolcengineConfig, comfyCfg config.ComfyUIBridgeConfig, geminiCfg config.OpenAICompatibleVisionConfig, geminiImageCfg config.OpenAICompatibleVisionConfig, minimaxCfg config.MinimaxConfig, minimaxImageCfg config.MinimaxImageConfig, kimiCfg config.KimiCodingConfig, paiVideoCfg config.PaiVideoConfig) *ProviderRegistry {
 	registry := &ProviderRegistry{providers: map[string]GenerationProvider{}}
 	registry.Register(newManualProvider("manual"))
 	registry.Register(newManualProvider("mock"))
 	registry.Register(newVolcengineImageProvider("volcengine", volcengineCfg))
 	registry.Register(newMinimaxTextProvider("minimax_text", minimaxCfg))
 	registry.Register(newKimiCodingTextProvider("kimi_coding_text", kimiCfg))
+	if paiVideoCfg.Enabled {
+		registry.Register(newPaiVideoProvider("pai_video", paiVideoCfg))
+	}
 	if minimaxImageCfg.Enabled {
 		registry.Register(newMinimaxImageProvider("minimax_image_generation", minimaxImageCfg))
 	}

@@ -47,6 +47,7 @@ It must not absorb product-specific workflows from KYC, Attendance, or Menu AI.
 - [**Runtime And Charge Platformization**](docs/architecture/RUNTIME_AND_CHARGE_PLATFORMIZATION.md): First landing scope for shared runtime jobs, charge sessions, and product-facing internal runtime APIs.
 - [**Asset Storage Registry And Import**](docs/architecture/ASSET_STORAGE_REGISTRY_AND_IMPORT.md): Platform-owned storage asset registry, import-local contract, and manifest-driven asset ingestion guidance.
 - [**Commercialization Boundary**](docs/architecture/COMMERCIALIZATION_BOUNDARY.md): Shared monetization infrastructure versus product-owned business policy.
+- [**Product Billing Gateway Standard**](docs/architecture/PRODUCT_BILLING_GATEWAY_STANDARD.md): Product-facing v2 billing gateway that wraps catalog view, package activation, begin/bind-runtime/complete/release/reconcile, keeping wallet/quota/metering truth in Platform.
 - [**Commercial Catalog Model**](docs/architecture/COMMERCIAL_CATALOG_MODEL.md): Product, SKU, package, billable item, and rate card model.
 - [**Commercial Routing Model**](docs/architecture/COMMERCIAL_ROUTING_MODEL.md): Commercial entity, merchant account, billing profile, and routing policy design.
 - [**Metering And Usage SSOT**](docs/architecture/METERING_AND_USAGE_SSOT.md): Metering event contract, usage truth model, and async usage pipeline.
