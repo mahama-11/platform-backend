@@ -238,6 +238,12 @@ bootstrap:
         local_base_dir: "/app/data/storage"
         priority: 100
         enabled: true
+      - product_code: "novel_video"
+        category: "novel-video-inputs"
+        provider_code: "local"
+        local_base_dir: "/app/data/storage"
+        priority: 100
+        enabled: true
 
 database:
   driver: postgres

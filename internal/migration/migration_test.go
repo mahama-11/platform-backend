@@ -205,3 +205,43 @@ func TestSeedEcommerceOfferingsVisibleBaseline(t *testing.T) {
 	assertCountAtLeast("ecommerce asset definitions", &models.AssetDefinition{}, "product_code = ?", []any{"ecommerce"}, 4)
 	assertCountAtLeast("ecommerce quota policies", &models.QuotaGrantPolicy{}, "product_code = ?", []any{"ecommerce"}, 5)
 }
+
+func TestSeedNovelVideoOfferingsCommercialBaseline(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := Up(db); err != nil {
+		t.Fatalf("Up: %v", err)
+	}
+	if err := seedNovelVideoOfferings(db); err != nil {
+		t.Fatalf("seedNovelVideoOfferings idempotent rerun: %v", err)
+	}
+	var product models.Product
+	if err := db.Where("code = ?", "novel_video").First(&product).Error; err != nil {
+		t.Fatalf("load novel_video product: %v", err)
+	}
+	assertCountAtLeast := func(name string, model any, where string, args []any, want int64) {
+		t.Helper()
+		var count int64
+		if err := db.Model(model).Where(where, args...).Count(&count).Error; err != nil {
+			t.Fatalf("count %s: %v", name, err)
+		}
+		if count < want {
+			t.Fatalf("%s count = %d, want >= %d", name, count, want)
+		}
+	}
+	assertCountAtLeast("novel skus", &models.SKU{}, "product_id = ?", []any{product.ID}, 5)
+	assertCountAtLeast("novel packages", &models.CommercialPackage{}, "product_id = ?", []any{product.ID}, 5)
+	assertCountAtLeast("novel billable items", &models.BillableItem{}, "product_id = ?", []any{product.ID}, 3)
+	assertCountAtLeast("novel rate cards", &models.RateCard{}, "product_id = ?", []any{product.ID}, 6)
+	assertCountAtLeast("novel quota policies", &models.QuotaGrantPolicy{}, "product_code = ?", []any{"novel_video"}, 5)
+
+	var trialPolicy models.QuotaGrantPolicy
+	if err := db.Where("product_code = ? AND package_code = ? AND billable_item_code = ?", "novel_video", "novel.pkg.trial.signup", "novel_video_generation").First(&trialPolicy).Error; err != nil {
+		t.Fatalf("load signup trial policy: %v", err)
+	}
+	if trialPolicy.Units != 180 || trialPolicy.Status != "active" || trialPolicy.GrantMode != "one_time" {
+		t.Fatalf("unexpected signup trial policy: %+v", trialPolicy)
+	}
+}
