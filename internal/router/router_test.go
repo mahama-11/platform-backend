@@ -67,6 +67,12 @@ func TestNewRegistersCoreRoutes(t *testing.T) {
 		"GET /api/v1/audit/logs/:auditID",
 		"GET /api/v1/audit/diagnostics/requests/:requestID",
 		"POST /internal/v1/runtime/jobs",
+		"GET /internal/v1/runtime/providers/:providerCode/balance",
+		"GET /internal/v1/runtime/providers/:providerCode/tts-voices",
+		"POST /internal/v1/runtime/providers/:providerCode/image-upload",
+		"POST /internal/v1/runtime/providers/:providerCode/media-upload",
+		"POST /internal/v1/runtime/providers/:providerCode/media-upload-url",
+		"POST /internal/v1/runtime/providers/:providerCode/actions/:action",
 		"POST /internal/v1/commercial/route/resolve",
 		"GET /internal/v1/wallet/summary",
 	}

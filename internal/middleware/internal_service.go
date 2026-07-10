@@ -1,9 +1,12 @@
 package middleware
 
 import (
-	"bytes"
+	"crypto/sha256"
 	"crypto/subtle"
+	"errors"
 	"io"
+	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -50,14 +53,36 @@ func RequireInternalService(secret string) gin.HandlerFunc {
 			return
 		}
 
-		body, err := io.ReadAll(c.Request.Body)
+		bodyFile, err := os.CreateTemp("", "platform-internal-body-*")
 		if err != nil {
+			response.WriteObservedSemanticError(c, err, response.CodeInternalError, "failed to buffer request body", "INTERNAL_AUTH_BODY_BUFFER_FAILED", "Retry the request and verify the platform temporary directory is writable.")
+			c.Abort()
+			return
+		}
+		defer func() {
+			_ = bodyFile.Close()
+			_ = os.Remove(bodyFile.Name())
+		}()
+		bodyHash := sha256.New()
+		_, err = io.Copy(io.MultiWriter(bodyFile, bodyHash), c.Request.Body)
+		if err != nil {
+			var maxBytesErr *http.MaxBytesError
+			if errors.As(err, &maxBytesErr) {
+				response.JSONErrorWithStatus(c, response.CodeInvalidParameter, "request body too large", http.StatusRequestEntityTooLarge)
+				c.Abort()
+				return
+			}
 			response.WriteObservedSemanticError(c, err, response.CodeInternalError, "failed to read request body", "INTERNAL_AUTH_BODY_READ_FAILED", "Retry the request and verify the upstream client sends a readable request body.")
 			c.Abort()
 			return
 		}
-		c.Request.Body = io.NopCloser(bytes.NewReader(body))
-		if !internalauth.Verify(secret, signature, service, c.Request.Method, c.Request.URL.Path, timestamp, body) {
+		if _, err := bodyFile.Seek(0, io.SeekStart); err != nil {
+			response.WriteObservedSemanticError(c, err, response.CodeInternalError, "failed to rewind request body", "INTERNAL_AUTH_BODY_REWIND_FAILED", "Retry the request and verify the platform temporary directory is healthy.")
+			c.Abort()
+			return
+		}
+		c.Request.Body = bodyFile
+		if !internalauth.VerifyBodyHash(secret, signature, service, c.Request.Method, c.Request.URL.Path, timestamp, bodyHash.Sum(nil)) {
 			logger.With(
 				"request_id", c.GetString(platformconst.CtxRequestID),
 				"trace_id", c.GetString(platformconst.CtxTraceID),

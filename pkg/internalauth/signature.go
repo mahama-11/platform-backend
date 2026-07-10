@@ -13,7 +13,11 @@ import (
 
 func BuildMessage(service, method, path, timestamp string, body []byte) string {
 	bodyHash := sha256.Sum256(body)
-	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s", service, method, path, timestamp, hex.EncodeToString(bodyHash[:]))
+	return BuildMessageWithBodyHash(service, method, path, timestamp, bodyHash[:])
+}
+
+func BuildMessageWithBodyHash(service, method, path, timestamp string, bodyHash []byte) string {
+	return fmt.Sprintf("%s\n%s\n%s\n%s\n%s", service, method, path, timestamp, hex.EncodeToString(bodyHash))
 }
 
 func Sign(secret, service, method, path, timestamp string, body []byte) string {
@@ -25,6 +29,14 @@ func Sign(secret, service, method, path, timestamp string, body []byte) string {
 
 func Verify(secret, signature, service, method, path, timestamp string, body []byte) bool {
 	expected := Sign(secret, service, method, path, timestamp, body)
+	return hmac.Equal([]byte(signature), []byte(expected))
+}
+
+func VerifyBodyHash(secret, signature, service, method, path, timestamp string, bodyHash []byte) bool {
+	message := BuildMessageWithBodyHash(service, method, path, timestamp, bodyHash)
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(message))
+	expected := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(signature), []byte(expected))
 }
 

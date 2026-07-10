@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"platform-service/internal/config"
 )
@@ -199,6 +200,32 @@ func TestPaiVideoRejectsMalformedOfficialEnvelopeAndClassifiesUpstreamErrors(t *
 	})
 }
 
+func TestPaiVideoSubmitDoesNotBlindlyRetryAmbiguousAcceptance(t *testing.T) {
+	t.Run("success envelope without video id", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ErrCode": 0, "ErrMsg": "Success", "Resp": map[string]any{}})
+		}))
+		defer server.Close()
+		provider := newPaiVideoProvider("pai_video", config.PaiVideoConfig{Enabled: true, BaseURL: server.URL, APIKey: "test-key"}).(*paiVideoProvider)
+		_, err := provider.Submit(context.Background(), ProviderJobRequest{TaskType: "video_text_to_video", Input: RuntimeInputManifest{ParamsSnapshot: map[string]any{"prompt": "cat"}}})
+		if err == nil || isRetryableProviderError(err) {
+			t.Fatalf("missing video id must be non-retryable, got %v", err)
+		}
+	})
+	t.Run("timed out submit", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(50 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ErrCode": 0, "Resp": map[string]any{"video_id": "late"}})
+		}))
+		defer server.Close()
+		provider := newPaiVideoProvider("pai_video", config.PaiVideoConfig{Enabled: true, BaseURL: server.URL, APIKey: "test-key", RequestTimeout: 10 * time.Millisecond}).(*paiVideoProvider)
+		_, err := provider.Submit(context.Background(), ProviderJobRequest{TaskType: "video_text_to_video", Input: RuntimeInputManifest{ParamsSnapshot: map[string]any{"prompt": "cat"}}})
+		if err == nil || isRetryableProviderError(err) {
+			t.Fatalf("unknown submit outcome must be non-retryable, got %v", err)
+		}
+	})
+}
+
 func TestPaiVideoRequestTraceHeaderUsesContextCorrelation(t *testing.T) {
 	var traceHeader string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -270,5 +297,38 @@ func TestPaiVideoNoGenerationFakeUpstreamContracts(t *testing.T) {
 		if paths[key] == 0 {
 			t.Fatalf("missing no-generation path %s, paths=%v", key, paths)
 		}
+	}
+}
+
+func TestPaiVideoPollNormalizesCompletedAndFailedResults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := map[string]any{"status": 5}
+		switch r.URL.Path {
+		case "/video/result/completed":
+			resp = map[string]any{"status": 1, "url": "https://cdn.example.com/video.mp4", "cover_url": "https://cdn.example.com/cover.jpg"}
+		case "/video/result/failed":
+			resp = map[string]any{"status": 7, "message": "upstream failed"}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ErrCode": 0, "ErrMsg": "Success", "Resp": resp})
+	}))
+	defer server.Close()
+	provider := newPaiVideoProvider("pai_video", config.PaiVideoConfig{Enabled: true, BaseURL: server.URL, APIKey: "test-key"}).(*paiVideoProvider)
+
+	completed, err := provider.Poll(context.Background(), "completed")
+	if err != nil || completed.Status != "completed" || completed.Completion == nil || len(completed.Completion.Variants) != 1 || completed.Completion.Variants[0].SourceURL == "" {
+		t.Fatalf("completed poll=%+v err=%v", completed, err)
+	}
+	failed, err := provider.Poll(context.Background(), "failed")
+	if err != nil || failed.Status != "failed" || failed.ErrorMessage != "upstream failed" {
+		t.Fatalf("failed poll=%+v err=%v", failed, err)
+	}
+	if _, err := provider.Poll(context.Background(), ""); err == nil || isRetryableProviderError(err) {
+		t.Fatalf("empty provider job id should be non-retryable: %v", err)
+	}
+	if provider.Name() != "pai_video" {
+		t.Fatalf("provider name=%s", provider.Name())
+	}
+	if err := provider.Cancel(context.Background(), "completed"); err != nil {
+		t.Fatalf("Cancel: %v", err)
 	}
 }

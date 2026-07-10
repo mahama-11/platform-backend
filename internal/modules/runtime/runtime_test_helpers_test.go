@@ -44,19 +44,23 @@ type fakeProvider struct {
 	name         string
 	submitFn     func(ProviderJobRequest) (*ProviderSubmission, error)
 	pollFn       func(string) (*ProviderPollResult, error)
+	submitCtx    context.Context
+	pollCtx      context.Context
 	cancelCalled bool
 }
 
 func (p *fakeProvider) Name() string { return p.name }
 
-func (p *fakeProvider) Submit(_ context.Context, req ProviderJobRequest) (*ProviderSubmission, error) {
+func (p *fakeProvider) Submit(ctx context.Context, req ProviderJobRequest) (*ProviderSubmission, error) {
+	p.submitCtx = ctx
 	if p.submitFn != nil {
 		return p.submitFn(req)
 	}
 	return &ProviderSubmission{ProviderJobID: "provider-job", Stage: "provider_accepted", StageMessage: "accepted"}, nil
 }
 
-func (p *fakeProvider) Poll(_ context.Context, providerJobID string) (*ProviderPollResult, error) {
+func (p *fakeProvider) Poll(ctx context.Context, providerJobID string) (*ProviderPollResult, error) {
+	p.pollCtx = ctx
 	if p.pollFn != nil {
 		return p.pollFn(providerJobID)
 	}

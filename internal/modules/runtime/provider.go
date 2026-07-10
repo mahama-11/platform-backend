@@ -103,6 +103,12 @@ type RuntimeOutputVariantManifest struct {
 	Status     string                     `json:"status"`
 	IsSelected bool                       `json:"is_selected,omitempty"`
 	Asset      RuntimeOutputAssetManifest `json:"asset"`
+	// Flat fields keep legacy product consumers compatible while asset remains
+	// the canonical platform.runtime.output.v1 representation.
+	SourceURL  string         `json:"source_url,omitempty"`
+	PreviewURL string         `json:"preview_url,omitempty"`
+	MimeType   string         `json:"mime_type,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
 }
 
 type RuntimeOutputManifest struct {

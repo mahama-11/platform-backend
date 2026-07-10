@@ -17,6 +17,7 @@ cd "$ROOT_DIR"
 swag init \
   --generalInfo cmd/server/main.go \
   --output "$OUTPUT_DIR" \
+  --outputTypes json,yaml \
   --parseDependency \
   --parseInternal \
   --generatedTime=false

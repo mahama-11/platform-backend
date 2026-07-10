@@ -72,11 +72,14 @@ func (p *paiVideoProvider) Submit(ctx context.Context, req ProviderJobRequest) (
 	cleanPaiVideoPayload(endpoint, payload)
 	resp, err := p.requestJSON(ctx, http.MethodPost, endpoint, payload)
 	if err != nil {
+		if isRetryableProviderError(err) {
+			return nil, newNonRetryableProviderError("pai_video submit outcome is unknown; refusing blind retry: " + err.Error())
+		}
 		return nil, err
 	}
 	videoID := stringFromAny(firstAny(resp["video_id"], resp["videoId"], resp["id"]))
 	if videoID == "" {
-		return nil, newRetryableProviderError("pai_video did not return video_id")
+		return nil, newNonRetryableProviderError("pai_video did not return video_id; refusing blind retry")
 	}
 	return &ProviderSubmission{
 		ProviderJobID: videoID,
@@ -288,28 +291,65 @@ type paiVideoFilePart struct {
 }
 
 func (p *paiVideoProvider) requestForm(ctx context.Context, method, path string, fields map[string]string, files map[string]paiVideoFilePart) (map[string]any, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	for key, value := range fields {
-		_ = writer.WriteField(key, value)
+	if strings.TrimSpace(p.cfg.APIKey) == "" {
+		return nil, newNonRetryableProviderError("pai_video api key is not configured")
 	}
-	for key, file := range files {
-		part, err := writer.CreateFormFile(key, filepath.Base(file.Filename))
-		if err != nil {
-			return nil, newRetryableProviderError(fmt.Sprintf("pai_video form init failed: %v", err))
-		}
-		if _, err := io.Copy(part, file.Reader); err != nil {
-			return nil, newRetryableProviderError(fmt.Sprintf("pai_video form copy failed: %v", err))
-		}
+	if strings.TrimSpace(p.cfg.BaseURL) == "" {
+		return nil, newNonRetryableProviderError("pai_video base url is not configured")
 	}
-	_ = writer.Close()
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(p.cfg.BaseURL, "/")+path, &body)
+	bodyReader, bodyWriter := io.Pipe()
+	writer := multipart.NewWriter(bodyWriter)
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(p.cfg.BaseURL, "/")+path, bodyReader)
 	if err != nil {
+		_ = bodyReader.Close()
+		_ = bodyWriter.Close()
 		return nil, newRetryableProviderError(fmt.Sprintf("pai_video request init failed: %v", err))
 	}
 	p.setHeaders(req, ctx)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	return p.do(req)
+	producerDone := make(chan error, 1)
+	go func() {
+		for key, value := range fields {
+			if err := writer.WriteField(key, value); err != nil {
+				producerErr := fmt.Errorf("pai_video form field failed: %w", err)
+				_ = bodyWriter.CloseWithError(producerErr)
+				producerDone <- producerErr
+				return
+			}
+		}
+		for key, file := range files {
+			part, err := writer.CreateFormFile(key, filepath.Base(file.Filename))
+			if err != nil {
+				producerErr := fmt.Errorf("pai_video form init failed: %w", err)
+				_ = bodyWriter.CloseWithError(producerErr)
+				producerDone <- producerErr
+				return
+			}
+			if _, err := io.Copy(part, file.Reader); err != nil {
+				producerErr := fmt.Errorf("pai_video form copy failed: %w", err)
+				_ = bodyWriter.CloseWithError(producerErr)
+				producerDone <- producerErr
+				return
+			}
+		}
+		if err := writer.Close(); err != nil {
+			producerErr := fmt.Errorf("pai_video form close failed: %w", err)
+			_ = bodyWriter.CloseWithError(producerErr)
+			producerDone <- producerErr
+			return
+		}
+		producerDone <- bodyWriter.Close()
+	}()
+	result, requestErr := p.do(req)
+	_ = bodyReader.Close()
+	producerErr := <-producerDone
+	if requestErr != nil {
+		return nil, requestErr
+	}
+	if producerErr != nil {
+		return nil, newRetryableProviderError(producerErr.Error())
+	}
+	return result, nil
 }
 
 func (p *paiVideoProvider) setHeaders(req *http.Request, ctx context.Context) {

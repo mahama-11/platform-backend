@@ -113,6 +113,8 @@ var ErrInvalidAssetPayload = errors.New("invalid storage asset payload")
 var ErrStorageBindingNotFound = errors.New("storage binding not found")
 var ErrUnsupportedStorageProvider = errors.New("unsupported storage provider")
 
+const maxRemoteAssetBytes int64 = 128 << 20
+
 func NewService(repo *repository.RuntimeRepository) *Service {
 	return &Service{
 		repo:   repo,
@@ -312,12 +314,25 @@ func (s *Service) ImportRemoteAsset(ctx context.Context, productCode, category, 
 			fileName = path.Base(parsed.Path)
 		}
 	}
-	limited := io.LimitReader(resp.Body, 20<<20)
-	data, err := io.ReadAll(limited)
+	data, err := readAssetBytes(resp.Body, maxRemoteAssetBytes)
 	if err != nil {
 		return nil, err
 	}
 	return s.storeBytes(productCode, category, fileName, mimeType, data)
+}
+
+func readAssetBytes(reader io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("remote asset size limit must be positive")
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("remote asset exceeds %d byte size limit", maxBytes)
+	}
+	return data, nil
 }
 
 func decodePayload(payload, fallbackMimeType string) ([]byte, string, error) {

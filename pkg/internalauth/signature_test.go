@@ -1,6 +1,7 @@
 package internalauth
 
 import (
+	"crypto/sha256"
 	"testing"
 
 	"platform-service/pkg/platformconst"
@@ -18,6 +19,10 @@ func TestBuildSignVerifyAndHeaders(t *testing.T) {
 	}
 	if !Verify("secret", sig, "svc", "POST", "/internal", "123", body) {
 		t.Fatalf("expected signature verification to pass")
+	}
+	bodyHash := sha256.Sum256(body)
+	if !VerifyBodyHash("secret", sig, "svc", "POST", "/internal", "123", bodyHash[:]) {
+		t.Fatalf("expected streaming body hash verification to pass")
 	}
 	if Verify("bad-secret", sig, "svc", "POST", "/internal", "123", body) {
 		t.Fatalf("expected signature verification to fail for bad secret")

@@ -433,3 +433,30 @@ GET /internal/v1/wallet/accounts?billing_subject_type=organization&billing_subje
 - 扩大更多模块和错误语义的注解覆盖
 - 保持生成产物与实际路由同步
 - 在新增 internal/public 接口时同步更新 README 与注解
+
+## 12. Runtime Provider 能力代理
+
+产品后端不得持有 Pai 等运行时供应商密钥。需要查询供应商余额、上传素材或调用供应商辅助动作时，统一通过 Platform internal API：
+
+- `GET /internal/v1/runtime/providers/:providerCode/balance`
+- `GET /internal/v1/runtime/providers/:providerCode/tts-voices`
+- `POST /internal/v1/runtime/providers/:providerCode/image-upload`
+  - `multipart/form-data`，优先读取 `image` 字段，也兼容 `file`
+- `POST /internal/v1/runtime/providers/:providerCode/media-upload`
+  - `multipart/form-data`，读取 `file` 字段
+- `POST /internal/v1/runtime/providers/:providerCode/media-upload-url`
+  - JSON：`{"file_url":"https://..."}`
+- `POST /internal/v1/runtime/providers/:providerCode/actions/:action`
+  - JSON：`{"payload":{...}}`；`action` 与 payload 由具体 provider 定义
+
+这些接口沿用 internal service HMAC 认证和统一响应 envelope。普通请求体默认上限为 16 MiB；provider 能力代理路径上限为 128 MiB，可通过 `security.max_body_bytes` 和 `security.provider_upload_max_bytes` 调整。超过限制返回 HTTP 413。
+
+Runtime worker 对付费异步 provider 使用以下安全语义：
+
+- `Submit` 返回超时或无法确认响应时，不盲目重新提交，避免同一任务被供应商重复计费。
+- 已获得 `provider_job_id` 后，临时轮询错误只重新入队 `Poll`，不得重新入队 `Dispatch`。
+- job 已有 `timeout_at` 时保留调用方设置；未设置时才使用 `runtime.execution_timeout`。
+- dispatch、poll 和结果持久化沿用 worker context；到达 `timeout_at` 后在再次调用 provider 前将 job 标记为 `provider_timeout`。
+- 远端结果导入 Platform storage 时最多读取 128 MiB，超限明确失败，不允许静默截断并注册损坏资产。
+- `platform.runtime.output.v1` 以 `variants[].asset` 为规范资产结构，同时保留 `variants[].source_url/preview_url/mime_type/metadata` 兼容字段，旧产品 consumer 可平滑迁移。
+- HMAC 验签过程将大请求体流式写入临时文件并计算摘要；验签后复用该文件，避免未认证的大上传在内存中整块展开。Pai multipart 转发同样采用流式管道。

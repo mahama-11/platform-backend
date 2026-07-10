@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -153,6 +154,12 @@ func TestRequireInternalServiceAndMetricsAccessLog(t *testing.T) {
 	r := gin.New()
 	r.Use(Metrics("platform", "test"), AccessLog(), RequireInternalService(secret))
 	r.POST("/internal/test", func(c *gin.Context) {
+		if c.GetString(platformconst.CtxInternalAuthMode) == platformconst.InternalAuthModeHMAC {
+			if _, ok := c.Request.Body.(*os.File); !ok {
+				c.String(http.StatusInternalServerError, "HMAC body was not buffered to a file")
+				return
+			}
+		}
 		c.String(200, c.GetString(platformconst.CtxInternalServiceName)+"|"+c.GetString(platformconst.CtxInternalAuthMode))
 	})
 
@@ -173,6 +180,26 @@ func TestRequireInternalServiceAndMetricsAccessLog(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "legacy-shared-secret|shared-secret") {
 		t.Fatalf("expected shared secret success, got status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestRequireInternalServiceMapsOversizedHMACBodyTo413(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	secret := "internal-secret"
+	body := bytes.Repeat([]byte("x"), 200)
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	signature := internalauth.Sign(secret, "caller-service", http.MethodPost, "/internal/upload", timestamp, body)
+	r := gin.New()
+	r.Use(BodySizeLimit(100), RequireInternalService(secret))
+	r.POST("/internal/upload", func(c *gin.Context) { c.Status(http.StatusCreated) })
+	req := httptest.NewRequest(http.MethodPost, "/internal/upload", bytes.NewReader(body))
+	req.Header.Set(platformconst.HeaderInternalService, "caller-service")
+	req.Header.Set(platformconst.HeaderInternalTimestamp, timestamp)
+	req.Header.Set(platformconst.HeaderInternalSignature, signature)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
@@ -339,6 +366,72 @@ func TestBodySizeLimit_RejectsOversizedBody(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("expected 413 for oversized body, got %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestBodySizeLimitWithPrefixOverridesAllowsBoundedProviderUpload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(BodySizeLimitWithPrefixOverrides(100, map[string]int64{"/internal/v1/runtime/providers/": 300}))
+	r.POST("/internal/v1/runtime/providers/:providerCode/media-upload", func(c *gin.Context) {
+		_, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.Status(http.StatusRequestEntityTooLarge)
+			return
+		}
+		c.Status(http.StatusCreated)
+	})
+	r.POST("/ordinary", func(c *gin.Context) {
+		_, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.Status(http.StatusRequestEntityTooLarge)
+			return
+		}
+		c.Status(http.StatusCreated)
+	})
+	payload := bytes.Repeat([]byte("x"), 200)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/runtime/providers/pai_video/media-upload", bytes.NewReader(payload))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("provider upload should use override: status=%d", w.Code)
+	}
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/ordinary", bytes.NewReader(payload))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("ordinary request should keep default limit: status=%d", w.Code)
+	}
+}
+
+func TestBodySizeLimitForRuntimeProviderUploadsOnlyWidensFileRoutes(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(BodySizeLimitForRuntimeProviderUploads(100, 300))
+	readBody := func(c *gin.Context) {
+		_, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.Status(http.StatusRequestEntityTooLarge)
+			return
+		}
+		c.Status(http.StatusCreated)
+	}
+	r.POST("/internal/v1/runtime/providers/:providerCode/media-upload", readBody)
+	r.POST("/internal/v1/runtime/providers/:providerCode/actions/:action", readBody)
+	payload := bytes.Repeat([]byte("x"), 200)
+
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/internal/v1/runtime/providers/pai_video/media-upload", bytes.NewReader(payload))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("provider file upload should use larger limit: status=%d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/internal/v1/runtime/providers/pai_video/actions/media-upload", bytes.NewReader(payload))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("provider action must keep ordinary limit: status=%d", w.Code)
 	}
 }
 

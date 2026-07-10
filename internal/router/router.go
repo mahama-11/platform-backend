@@ -49,7 +49,14 @@ func New(
 		serviceName = "platform-service"
 	}
 	r.Use(otelgin.Middleware(serviceName))
-	r.Use(middleware.RequestContext(), middleware.BodySizeLimit(cfg.Security.MaxBodyBytes), middleware.RateLimit(cfg.Security.RateLimitPerSecond, cfg.Security.RateLimitBurst), middleware.Metrics(cfg.Monitoring.Metrics.Namespace, cfg.Monitoring.Metrics.Subsystem), middleware.AccessLog(), gin.Recovery())
+	r.Use(
+		middleware.RequestContext(),
+		middleware.BodySizeLimitForRuntimeProviderUploads(cfg.Security.MaxBodyBytes, cfg.Security.ProviderUploadMaxBytes),
+		middleware.RateLimit(cfg.Security.RateLimitPerSecond, cfg.Security.RateLimitBurst),
+		middleware.Metrics(cfg.Monitoring.Metrics.Namespace, cfg.Monitoring.Metrics.Subsystem),
+		middleware.AccessLog(),
+		gin.Recovery(),
+	)
 
 	healthHandler := func(c *gin.Context) {
 		response.JSONSuccess(c, gin.H{"service": "v-platform-backend", "status": "ok"})
@@ -356,6 +363,12 @@ func New(
 		internal.GET("/metering/discounts", meteringHandler.ListDiscounts)
 		internal.POST("/runtime/providers", runtimeHandler.CreateProviderDefinition)
 		internal.GET("/runtime/providers", runtimeHandler.ListProviderDefinitions)
+		internal.GET("/runtime/providers/:providerCode/balance", runtimeHandler.ProviderBalance)
+		internal.GET("/runtime/providers/:providerCode/tts-voices", runtimeHandler.ProviderTTSVoices)
+		internal.POST("/runtime/providers/:providerCode/image-upload", runtimeHandler.ProviderUploadImage)
+		internal.POST("/runtime/providers/:providerCode/media-upload", runtimeHandler.ProviderUploadMedia)
+		internal.POST("/runtime/providers/:providerCode/media-upload-url", runtimeHandler.ProviderUploadURL)
+		internal.POST("/runtime/providers/:providerCode/actions/:action", runtimeHandler.ProviderAction)
 		internal.GET("/runtime/capabilities", runtimeHandler.ListRuntimeCapabilities)
 		internal.POST("/runtime/jobs", runtimeHandler.CreateRuntimeJob)
 		internal.GET("/runtime/jobs/:runtimeJobID", runtimeHandler.GetRuntimeJob)

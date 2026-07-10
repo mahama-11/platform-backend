@@ -276,6 +276,8 @@ redis:
 security:
   jwt_secret: platform-dev-secret
   jwt_expiration: 24h
+  max_body_bytes: 16777216
+  provider_upload_max_bytes: 134217728
   rate_limit_per_second: 100
   rate_limit_burst: 200
   kong_shared_secret: platform-kong-shared-secret

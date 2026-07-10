@@ -217,6 +217,9 @@ func TestImportRemoteAssetAndHelperFunctions(t *testing.T) {
 	if _, _, err := parseStorageKey("invalid"); err == nil {
 		t.Fatalf("expected invalid storage key error")
 	}
+	if _, err := readAssetBytes(strings.NewReader("12345"), 4); err == nil {
+		t.Fatalf("expected oversized asset error")
+	}
 	body := mustJSON(map[string]any{"a": 1}, "{}")
 	var parsed map[string]any
 	_ = json.Unmarshal([]byte(body), &parsed)

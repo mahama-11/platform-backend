@@ -41,4 +41,7 @@ security:
 	if cfg.Security.MaxBodyBytes != 16*1024*1024 {
 		t.Fatalf("expected source-upload-safe default body limit, got %d", cfg.Security.MaxBodyBytes)
 	}
+	if cfg.Security.ProviderUploadMaxBytes != 128*1024*1024 {
+		t.Fatalf("expected provider upload limit, got %d", cfg.Security.ProviderUploadMaxBytes)
+	}
 }

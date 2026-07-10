@@ -11,7 +11,11 @@ import (
 	"platform-service/pkg/platformconst"
 )
 
-func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManifest, completion *ProviderCompletion, now time.Time) error {
+func (s *Service) completeRuntimeJob(job *models.RuntimeJob, input RuntimeInputManifest, completion *ProviderCompletion, now time.Time) error {
+	return s.completeRuntimeJobWithContext(context.Background(), job, input, completion, now)
+}
+
+func (s *Service) completeRuntimeJobWithContext(ctx context.Context, job *models.RuntimeJob, _ RuntimeInputManifest, completion *ProviderCompletion, now time.Time) error {
 	variants := make([]ProductRecordResultVariant, 0, len(completion.Variants))
 	manifestVariants := make([]RuntimeOutputVariantManifest, 0, len(completion.Variants))
 	outputCategory := s.outputStorageCategory(job)
@@ -24,7 +28,7 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 		if s.storage != nil {
 			switch {
 			case strings.TrimSpace(variant.InlineData) != "":
-				stored, storeErr := s.storage.UploadAsset(context.Background(), assetstorage.UploadAssetInput{
+				stored, storeErr := s.storage.UploadAsset(ctx, assetstorage.UploadAssetInput{
 					ProductCode: job.ProductCode,
 					Category:    outputCategory,
 					FileName:    "",
@@ -43,7 +47,7 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 				previewURL = ""
 				variant.MimeType = firstNonEmpty(stored.MimeType, variant.MimeType)
 			case strings.TrimSpace(sourceURL) != "":
-				stored, storeErr := s.storage.ImportRemoteAsset(context.Background(), job.ProductCode, outputCategory, "", variant.MimeType, sourceURL)
+				stored, storeErr := s.storage.ImportRemoteAsset(ctx, job.ProductCode, outputCategory, "", variant.MimeType, sourceURL)
 				if storeErr != nil {
 					s.runtimeJobLogger(job).
 						With("variant_index", variant.Index, "output_storage_category", outputCategory, "storage_operation", "import_remote", "error", storeErr).
@@ -68,7 +72,7 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 			callbackText = variant.InlineData
 		}
 		if s.storage != nil && strings.TrimSpace(storageKey) != "" {
-			registered, registerErr := s.storage.RegisterAsset(context.Background(), assetstorage.RegisterAssetInput{
+			registered, registerErr := s.storage.RegisterAsset(ctx, assetstorage.RegisterAssetInput{
 				ProductCode: job.ProductCode,
 				Category:    outputCategory,
 				SourceType:  "runtime_output",
@@ -122,6 +126,10 @@ func (s *Service) completeRuntimeJob(job *models.RuntimeJob, _ RuntimeInputManif
 			Index:      variant.Index,
 			Status:     "ready",
 			IsSelected: variant.Index == 0,
+			SourceURL:  sourceURL,
+			PreviewURL: previewURL,
+			MimeType:   variant.MimeType,
+			Metadata:   assetMetadata,
 			Asset: RuntimeOutputAssetManifest{
 				AssetType:      assetType,
 				SourceType:     "runtime_output",

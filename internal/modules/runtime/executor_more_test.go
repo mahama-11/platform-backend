@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -26,7 +27,7 @@ func TestHandleDispatchTaskAndHandlePollTask(t *testing.T) {
 					Progress:     100,
 					StageMessage: "done",
 					Variants: []ProviderResultVariant{
-						{Index: 0, SourceURL: "https://example.com/result.png", MimeType: "image/png"},
+						{Index: 0, SourceURL: "https://example.com/result.png", PreviewURL: "https://example.com/preview.png", MimeType: "image/png", Metadata: map[string]any{"provider": "fake"}},
 					},
 				},
 			}, nil
@@ -61,6 +62,104 @@ func TestHandleDispatchTaskAndHandlePollTask(t *testing.T) {
 	updated, _ = repo.FindRuntimeJobByID(job.ID)
 	if updated.Status != "completed" {
 		t.Fatalf("expected completed job after poll, got %+v", updated)
+	}
+	var manifest struct {
+		Variants []struct {
+			SourceURL  string         `json:"source_url"`
+			PreviewURL string         `json:"preview_url"`
+			MimeType   string         `json:"mime_type"`
+			Metadata   map[string]any `json:"metadata"`
+			Asset      struct {
+				SourceURL  string         `json:"source_url"`
+				PreviewURL string         `json:"preview_url"`
+				MimeType   string         `json:"mime_type"`
+				Metadata   map[string]any `json:"metadata"`
+			} `json:"asset"`
+		} `json:"variants"`
+	}
+	if err := json.Unmarshal([]byte(updated.OutputManifest), &manifest); err != nil || len(manifest.Variants) != 1 {
+		t.Fatalf("decode output manifest: manifest=%+v err=%v", manifest, err)
+	}
+	variant := manifest.Variants[0]
+	if variant.SourceURL != "https://example.com/result.png" || variant.PreviewURL != "https://example.com/preview.png" || variant.MimeType != "image/png" || variant.Metadata["provider"] != "fake" || variant.SourceURL != variant.Asset.SourceURL || variant.PreviewURL != variant.Asset.PreviewURL || variant.MimeType != variant.Asset.MimeType || variant.Metadata["provider"] != variant.Asset.Metadata["provider"] {
+		t.Fatalf("output manifest must preserve flat consumer compatibility: %+v", manifest.Variants[0])
+	}
+}
+
+func TestHandlePollTaskRetriesPollWithoutResubmittingAcceptedJob(t *testing.T) {
+	service, repo, queue := newRuntimeServiceForTest(t)
+	provider := &fakeProvider{name: "pai_video", pollFn: func(string) (*ProviderPollResult, error) {
+		return nil, newRetryableProviderError("temporary poll failure")
+	}}
+	registry := &ProviderRegistry{providers: map[string]GenerationProvider{}}
+	registry.Register(provider)
+	service.UseRuntime(queue, registry)
+	future := time.Now().Add(time.Minute)
+	job := &models.RuntimeJob{ID: "job-poll-retry", ProductCode: "novel_video", TaskType: "video_text_to_video", ProviderCode: "pai_video", ProviderJobID: "provider-job-1", Status: "processing", TimeoutAt: &future, MaxAttempts: 3}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	type contextKey string
+	ctx := context.WithValue(context.Background(), contextKey("request"), "req-1")
+	if err := service.HandlePollTask(ctx, job.ID); err != nil {
+		t.Fatalf("HandlePollTask: %v", err)
+	}
+	updated, _ := repo.FindRuntimeJobByID(job.ID)
+	if updated.Status != "processing" || updated.ProviderJobID != "provider-job-1" {
+		t.Fatalf("accepted job must stay processing: %+v", updated)
+	}
+	if len(queue.polls) != 1 || len(queue.dispatches) != 0 {
+		t.Fatalf("poll error must requeue poll only: polls=%+v dispatches=%+v", queue.polls, queue.dispatches)
+	}
+	if provider.pollCtx == nil || provider.pollCtx.Value(contextKey("request")) != "req-1" {
+		t.Fatalf("caller context was not propagated to provider poll")
+	}
+}
+
+func TestHandlePollTaskClearsStalePollRetryStateAfterProviderProgress(t *testing.T) {
+	service, repo, queue := newRuntimeServiceForTest(t)
+	provider := &fakeProvider{name: "pai_video"}
+	registry := &ProviderRegistry{providers: map[string]GenerationProvider{}}
+	registry.Register(provider)
+	service.UseRuntime(queue, registry)
+	future := time.Now().Add(time.Minute)
+	retryAt := time.Now().Add(-time.Second)
+	job := &models.RuntimeJob{
+		ID: "job-poll-recovered", ProductCode: "novel_video", TaskType: "video_text_to_video",
+		ProviderCode: "pai_video", ProviderJobID: "provider-job-1", Status: "processing",
+		TimeoutAt: &future, NextRetryAt: &retryAt, ErrorClass: "retryable_provider",
+		ErrorCode: "PROVIDER_POLL_FAILED", ErrorMessage: "temporary poll failure",
+	}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	if err := service.HandlePollTask(context.Background(), job.ID); err != nil {
+		t.Fatalf("HandlePollTask: %v", err)
+	}
+	updated, _ := repo.FindRuntimeJobByID(job.ID)
+	if updated.NextRetryAt != nil || updated.ErrorClass != "" || updated.ErrorCode != "" || updated.ErrorMessage != "" {
+		t.Fatalf("successful provider progress left stale retry state: %+v", updated)
+	}
+	if len(queue.polls) != 1 || len(queue.dispatches) != 0 {
+		t.Fatalf("provider progress must continue polling only: polls=%+v dispatches=%+v", queue.polls, queue.dispatches)
+	}
+}
+
+func TestHandlePollTaskFailsExpiredJobWithoutCallingProvider(t *testing.T) {
+	service, repo, queue := newRuntimeServiceForTest(t)
+	provider := &fakeProvider{name: "pai_video"}
+	registry := &ProviderRegistry{providers: map[string]GenerationProvider{}}
+	registry.Register(provider)
+	service.UseRuntime(queue, registry)
+	past := time.Now().Add(-time.Second)
+	job := &models.RuntimeJob{ID: "job-expired", ProductCode: "novel_video", TaskType: "video_text_to_video", ProviderCode: "pai_video", ProviderJobID: "provider-job-1", Status: "processing", TimeoutAt: &past}
+	if err := repo.CreateRuntimeJob(job); err != nil {
+		t.Fatalf("CreateRuntimeJob: %v", err)
+	}
+	_ = service.HandlePollTask(context.Background(), job.ID)
+	updated, _ := repo.FindRuntimeJobByID(job.ID)
+	if updated.Status != "failed" || updated.ErrorClass != "provider_timeout" || provider.pollCtx != nil {
+		t.Fatalf("expired job was not failed before polling: job=%+v pollCtx=%v", updated, provider.pollCtx)
 	}
 }
 

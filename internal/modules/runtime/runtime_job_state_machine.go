@@ -220,8 +220,13 @@ func applyRuntimeJobTransitionFields(job *models.RuntimeJob, input RuntimeJobTra
 	if input.NextRetryAt != nil {
 		job.NextRetryAt = input.NextRetryAt
 	}
-	if input.Event == RuntimeJobEventProviderAccepted || input.Event == RuntimeJobEventFallbackScheduled {
+	if input.Event == RuntimeJobEventProviderAccepted || input.Event == RuntimeJobEventFallbackScheduled || (input.Event == RuntimeJobEventProviderProgress && input.NextRetryAt == nil) {
 		job.NextRetryAt = nil
+	}
+	if input.Event == RuntimeJobEventProviderAccepted || (input.Event == RuntimeJobEventProviderProgress && input.ErrorClass == "" && input.ErrorCode == "" && input.ErrorMessage == "") {
+		job.ErrorClass = ""
+		job.ErrorCode = ""
+		job.ErrorMessage = ""
 	}
 }
 

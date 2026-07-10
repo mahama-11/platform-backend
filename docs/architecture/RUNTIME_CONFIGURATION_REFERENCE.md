@@ -4,7 +4,7 @@ Owner: `v-platform-backend` runtime module
 
 ## 1. Purpose
 
-This document explains how to configure platform runtime product endpoints, provider bindings, storage output metadata, and async image-provider integration such as `comfyui_bridge`.
+This document explains how to configure platform runtime product endpoints, provider bindings, storage output metadata, and async providers such as `comfyui_bridge` and `pai_video`.
 
 It focuses on the practical question:
 
@@ -22,6 +22,9 @@ The main runtime-related local config lives under:
 - `runtime`
 - `comfyui_bridge`
 - `volcengine`
+- `pai_video`
+- `security.max_body_bytes`
+- `security.provider_upload_max_bytes`
 
 Example local shape:
 
@@ -305,7 +308,31 @@ Recommended output storage category:
 
 - `ecommerce-assets`
 
-## 9. How To Find Future Supported Values
+## 9. Pai Video Provider
+
+`pai_video` reads its credential from `api_key` or `api_key_file`; production-like environments should use the file form and must not commit a real key.
+
+```yaml
+security:
+  max_body_bytes: 16777216
+  provider_upload_max_bytes: 134217728
+
+pai_video:
+  enabled: true
+  base_url: "https://api.example.com"
+  api_key_file: "/run/secrets/pai_video_api_key"
+  request_timeout: 60s
+```
+
+The larger body limit is bounded to internal runtime provider capability routes. Provider files and remotely imported result assets are limited to 128 MiB by default; oversize inputs fail instead of being truncated.
+
+Paid async execution rules:
+
+- ambiguous submit failures are non-retryable because Platform cannot prove whether the upstream accepted and charged the request;
+- after `provider_job_id` is stored, retryable poll failures enqueue another poll only;
+- an existing job `timeout_at` is authoritative, and provider calls receive the worker context.
+
+## 10. How To Find Future Supported Values
 
 When unsure whether a config value is an enum, contract string, or free metadata:
 

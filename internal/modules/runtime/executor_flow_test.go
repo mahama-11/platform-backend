@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 func TestDispatchRuntimeJobAcceptsAsyncSubmissionAndEnqueuesPoll(t *testing.T) {
 	service, repo, queue := newRuntimeServiceForTest(t)
 	registry := &ProviderRegistry{providers: map[string]GenerationProvider{}}
-	registry.Register(&fakeProvider{
+	provider := &fakeProvider{
 		name: "comfyui_bridge",
 		submitFn: func(req ProviderJobRequest) (*ProviderSubmission, error) {
 			return &ProviderSubmission{
@@ -20,7 +21,8 @@ func TestDispatchRuntimeJobAcceptsAsyncSubmissionAndEnqueuesPoll(t *testing.T) {
 				EtaSeconds:    12,
 			}, nil
 		},
-	})
+	}
+	registry.Register(provider)
 	service.UseRuntime(queue, registry)
 
 	job := &models.RuntimeJob{
@@ -37,11 +39,15 @@ func TestDispatchRuntimeJobAcceptsAsyncSubmissionAndEnqueuesPoll(t *testing.T) {
 		InputManifest:  `{"input_mode":"text_to_image","params_snapshot":{"prompt":"hello"}}`,
 		MaxAttempts:    3,
 	}
+	customTimeout := time.Now().Add(10 * time.Minute).Truncate(time.Millisecond)
+	job.TimeoutAt = &customTimeout
 	if err := repo.CreateRuntimeJob(job); err != nil {
 		t.Fatalf("CreateRuntimeJob: %v", err)
 	}
-	if err := service.dispatchRuntimeJob(job, time.Now()); err != nil {
-		t.Fatalf("dispatchRuntimeJob: %v", err)
+	type contextKey string
+	ctx := context.WithValue(context.Background(), contextKey("request"), "req-1")
+	if err := service.HandleDispatchTask(ctx, job.ID); err != nil {
+		t.Fatalf("HandleDispatchTask: %v", err)
 	}
 	updated, err := repo.FindRuntimeJobByID(job.ID)
 	if err != nil {
@@ -49,6 +55,12 @@ func TestDispatchRuntimeJobAcceptsAsyncSubmissionAndEnqueuesPoll(t *testing.T) {
 	}
 	if updated.ProviderJobID != "provider-job-1" || updated.Status != "processing" {
 		t.Fatalf("unexpected updated job: %+v", updated)
+	}
+	if updated.TimeoutAt == nil || !updated.TimeoutAt.Truncate(time.Millisecond).Equal(customTimeout) {
+		t.Fatalf("custom timeout was overwritten: got=%v want=%v", updated.TimeoutAt, customTimeout)
+	}
+	if provider.submitCtx == nil || provider.submitCtx.Value(contextKey("request")) != "req-1" {
+		t.Fatalf("caller context was not propagated to provider submit")
 	}
 	if len(queue.polls) != 1 || queue.polls[0].RuntimeJobID != job.ID {
 		t.Fatalf("expected poll enqueue, got %+v", queue.polls)

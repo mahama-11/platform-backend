@@ -281,14 +281,15 @@ type RedisConfig struct {
 }
 
 type SecurityConfig struct {
-	JWTSecret             string        `mapstructure:"jwt_secret"`
-	JWTExpiration         time.Duration `mapstructure:"jwt_expiration"`
-	MaxBodyBytes          int64         `mapstructure:"max_body_bytes"`
-	RateLimitPerSecond    int           `mapstructure:"rate_limit_per_second"`
-	RateLimitBurst        int           `mapstructure:"rate_limit_burst"`
-	KongSharedSecret      string        `mapstructure:"kong_shared_secret"`
-	InternalServiceSecret string        `mapstructure:"internal_service_secret"`
-	EncryptionKey         string        `mapstructure:"encryption_key"`
+	JWTSecret              string        `mapstructure:"jwt_secret"`
+	JWTExpiration          time.Duration `mapstructure:"jwt_expiration"`
+	MaxBodyBytes           int64         `mapstructure:"max_body_bytes"`
+	ProviderUploadMaxBytes int64         `mapstructure:"provider_upload_max_bytes"`
+	RateLimitPerSecond     int           `mapstructure:"rate_limit_per_second"`
+	RateLimitBurst         int           `mapstructure:"rate_limit_burst"`
+	KongSharedSecret       string        `mapstructure:"kong_shared_secret"`
+	InternalServiceSecret  string        `mapstructure:"internal_service_secret"`
+	EncryptionKey          string        `mapstructure:"encryption_key"`
 }
 
 type OAuthConfig struct {
@@ -530,6 +531,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("security.jwt_secret", "platform-dev-secret")
 	v.SetDefault("security.jwt_expiration", "24h")
 	v.SetDefault("security.max_body_bytes", 16*1024*1024)
+	v.SetDefault("security.provider_upload_max_bytes", 128*1024*1024)
 	v.SetDefault("security.rate_limit_per_second", 100)
 	v.SetDefault("security.rate_limit_burst", 200)
 	v.SetDefault("security.kong_shared_secret", "platform-kong-shared-secret")

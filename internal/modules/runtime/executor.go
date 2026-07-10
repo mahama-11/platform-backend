@@ -55,20 +55,20 @@ func defaultRuntimeConfig(cfg config.RuntimeConfig) config.RuntimeConfig {
 	return cfg
 }
 
-func (s *Service) HandleDispatchTask(_ context.Context, runtimeJobID string) error {
+func (s *Service) HandleDispatchTask(ctx context.Context, runtimeJobID string) error {
 	job, err := s.repo.FindRuntimeJobByID(runtimeJobID)
 	if err != nil {
 		return err
 	}
-	return s.dispatchRuntimeJob(job, time.Now())
+	return s.dispatchRuntimeJobWithContext(ctx, job, time.Now())
 }
 
-func (s *Service) HandlePollTask(_ context.Context, runtimeJobID string) error {
+func (s *Service) HandlePollTask(ctx context.Context, runtimeJobID string) error {
 	job, err := s.repo.FindRuntimeJobByID(runtimeJobID)
 	if err != nil {
 		return err
 	}
-	return s.pollRuntimeJob(job, time.Now())
+	return s.pollRuntimeJobWithContext(ctx, job, time.Now())
 }
 
 func (s *Service) HandleCallbackTask(ctx context.Context, deliveryID string) error {
@@ -138,8 +138,15 @@ func (s *Service) HandleCallbackTask(ctx context.Context, deliveryID string) err
 }
 
 func (s *Service) dispatchRuntimeJob(job *models.RuntimeJob, now time.Time) error {
+	return s.dispatchRuntimeJobWithContext(context.Background(), job, now)
+}
+
+func (s *Service) dispatchRuntimeJobWithContext(ctx context.Context, job *models.RuntimeJob, now time.Time) error {
 	if job.Status != "queued" {
 		return nil
+	}
+	if job.TimeoutAt != nil && !now.Before(*job.TimeoutAt) {
+		return s.failRuntimeJob(job, "provider_timeout", "PROVIDER_TIMEOUT", "runtime job timed out before provider dispatch", now)
 	}
 	if s.registry == nil {
 		return nil
@@ -160,7 +167,11 @@ func (s *Service) dispatchRuntimeJob(job *models.RuntimeJob, now time.Time) erro
 	if hydrateErr != nil {
 		return s.failRuntimeJob(job, "source_asset_invalid", "SOURCE_ASSET_INVALID", hydrateErr.Error(), now)
 	}
-	timeoutAt := now.Add(s.cfg.ExecutionTimeout)
+	timeoutAt := job.TimeoutAt
+	if timeoutAt == nil {
+		defaultTimeoutAt := now.Add(s.cfg.ExecutionTimeout)
+		timeoutAt = &defaultTimeoutAt
+	}
 	if _, _, saveErr := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
 		Event:            RuntimeJobEventDispatchStarted,
 		Now:              now,
@@ -168,7 +179,7 @@ func (s *Service) dispatchRuntimeJob(job *models.RuntimeJob, now time.Time) erro
 		Stage:            "dispatching",
 		StageMessage:     "Dispatching to provider",
 		IncrementAttempt: true,
-		TimeoutAt:        &timeoutAt,
+		TimeoutAt:        timeoutAt,
 	}); saveErr != nil {
 		return saveErr
 	}
@@ -179,7 +190,7 @@ func (s *Service) dispatchRuntimeJob(job *models.RuntimeJob, now time.Time) erro
 		StageMessage:  "Dispatching to provider",
 		ProviderJobID: job.ProviderJobID,
 	})
-	submission, err := provider.Submit(context.Background(), ProviderJobRequest{
+	submission, err := provider.Submit(ctx, ProviderJobRequest{
 		RuntimeJobID:   job.ID,
 		TaskType:       job.TaskType,
 		ProductCode:    job.ProductCode,
@@ -234,7 +245,7 @@ func (s *Service) dispatchRuntimeJob(job *models.RuntimeJob, now time.Time) erro
 		ProviderJobID: job.ProviderJobID,
 	})
 	if submission.Completion != nil {
-		if err := s.completeRuntimeJob(job, input, submission.Completion, now); err != nil {
+		if err := s.completeRuntimeJobWithContext(ctx, job, input, submission.Completion, now); err != nil {
 			return s.failRuntimeJob(job, "result_persist_failed", "RESULT_PERSIST_FAILED", err.Error(), now)
 		}
 		return nil
@@ -301,8 +312,15 @@ func (s *Service) handleDispatchError(job *models.RuntimeJob, err error, now tim
 }
 
 func (s *Service) pollRuntimeJob(job *models.RuntimeJob, now time.Time) error {
+	return s.pollRuntimeJobWithContext(context.Background(), job, now)
+}
+
+func (s *Service) pollRuntimeJobWithContext(ctx context.Context, job *models.RuntimeJob, now time.Time) error {
 	if job.Status == platformconst.StatusCompleted || job.Status == platformconst.StatusFailed || job.Status == platformconst.StatusCanceled {
 		return nil
+	}
+	if job.TimeoutAt != nil && !now.Before(*job.TimeoutAt) {
+		return s.failRuntimeJob(job, "provider_timeout", "PROVIDER_TIMEOUT", "runtime job timed out while waiting for provider", now)
 	}
 	if job.ProviderCode == "" || job.ProviderJobID == "" || s.registry == nil {
 		return nil
@@ -311,9 +329,9 @@ func (s *Service) pollRuntimeJob(job *models.RuntimeJob, now time.Time) error {
 	if err != nil {
 		return err
 	}
-	result, err := provider.Poll(context.Background(), job.ProviderJobID)
+	result, err := provider.Poll(ctx, job.ProviderJobID)
 	if err != nil {
-		return s.handleDispatchError(job, err, now)
+		return s.handlePollError(job, err, now)
 	}
 	if result == nil {
 		return nil
@@ -332,13 +350,13 @@ func (s *Service) pollRuntimeJob(job *models.RuntimeJob, now time.Time) error {
 		if decodeErr != nil {
 			return s.failRuntimeJob(job, "input_manifest_invalid", "INPUT_MANIFEST_INVALID", decodeErr.Error(), now)
 		}
-		if err := s.completeRuntimeJob(job, input, result.Completion, now); err != nil {
+		if err := s.completeRuntimeJobWithContext(ctx, job, input, result.Completion, now); err != nil {
 			return s.failRuntimeJob(job, "result_persist_failed", "RESULT_PERSIST_FAILED", err.Error(), now)
 		}
 		return nil
 	case platformconst.StatusFailed:
 		failErr := newNonRetryableProviderError(defaultString(result.ErrorMessage, "provider task failed"))
-		return s.handleDispatchError(job, failErr, now)
+		return s.handlePollError(job, failErr, now)
 	default:
 		_, transitionResult, err := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
 			Event:        RuntimeJobEventProviderProgress,
@@ -363,6 +381,35 @@ func (s *Service) pollRuntimeJob(job *models.RuntimeJob, now time.Time) error {
 		if s.queue != nil {
 			return s.queue.EnqueuePoll(job.ID, s.cfg.PollBackoff)
 		}
+	}
+	return nil
+}
+
+func (s *Service) handlePollError(job *models.RuntimeJob, err error, now time.Time) error {
+	if job.TimeoutAt != nil && !now.Before(*job.TimeoutAt) {
+		return s.failRuntimeJob(job, "provider_timeout", "PROVIDER_TIMEOUT", "runtime job timed out while waiting for provider", now)
+	}
+	if !isRetryableProviderError(err) {
+		return s.failRuntimeJob(job, classifyProviderErrorClass(err), "PROVIDER_POLL_FAILED", err.Error(), now)
+	}
+	retryAt := now.Add(s.cfg.PollBackoff)
+	if _, _, transitionErr := s.transitionRuntimeJob(job, RuntimeJobTransitionInput{
+		Event:        RuntimeJobEventProviderProgress,
+		Now:          now,
+		Stage:        "poll_retry_scheduled",
+		StageMessage: "Retry scheduled after provider poll failure",
+		NextRetryAt:  &retryAt,
+		ErrorClass:   classifyProviderErrorClass(err),
+		ErrorCode:    "PROVIDER_POLL_FAILED",
+		ErrorMessage: err.Error(),
+	}); transitionErr != nil {
+		return transitionErr
+	}
+	s.runtimeJobLogger(job).
+		With("retry_at", retryAt.Format(time.RFC3339), "error_class", job.ErrorClass, "error_code", job.ErrorCode).
+		Warn("runtime.poll.retry_scheduled")
+	if s.queue != nil {
+		return s.queue.EnqueuePoll(job.ID, s.cfg.PollBackoff)
 	}
 	return nil
 }

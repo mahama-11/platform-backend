@@ -205,6 +205,8 @@ redis:
 security:
   jwt_secret: change-me-in-prod
   jwt_expiration: 24h
+  max_body_bytes: 16777216
+  provider_upload_max_bytes: 134217728
   rate_limit_per_second: 200
   rate_limit_burst: 400
   kong_shared_secret: change-me-in-prod
